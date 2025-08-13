@@ -1,21 +1,43 @@
-﻿import React, { useState } from "react";
+﻿import React, { useMemo, useState, useEffect } from "react";
+import "./App.css";
 
-// Use env var in production, fall back to localhost for local dev
+const DEFAULT_TOPICS = [
+  "technology",
+  "business",
+  "entertainment",
+  "health",
+  "science",
+  "sports",
+  "world",
+  "politics",
+];
+
 const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:4000";
 
-const TOPICS = ["technology", "sports", "health", "business", "entertainment"];
-
 export default function App() {
+  const prefersDark = useMemo(
+    () => window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches,
+    []
+  );
+
+  const [dark, setDark] = useState(prefersDark);
+  const [topics] = useState(DEFAULT_TOPICS);
+  const [activeTopic, setActiveTopic] = useState("");
   const [summary, setSummary] = useState("");
   const [audioUrl, setAudioUrl] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
 
-  const fetchSummary = async (topic) => {
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  }, [dark]);
+
+  async function fetchSummary(topic) {
     setLoading(true);
     setErrorMsg("");
     setSummary("");
     setAudioUrl("");
+    setActiveTopic(topic);
 
     try {
       const res = await fetch(`${API_BASE}/api/generate`, {
@@ -26,94 +48,115 @@ export default function App() {
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `Request failed with ${res.status}`);
+        throw new Error(err.error || `Server error (${res.status})`);
       }
 
       const data = await res.json();
       setSummary(data.summary || "No summary returned.");
       if (data.audioUrl) setAudioUrl(data.audioUrl);
     } catch (e) {
-      setErrorMsg(e.message || "Error fetching summary.");
+      setErrorMsg(e.message || "Something went wrong.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
-  const speakSummary = () => {
+  function speakSummary() {
     if (!summary) return;
     if (!window.speechSynthesis) {
-      alert("Text-to-Speech not supported in this browser.");
+      setErrorMsg("Text-to-Speech not supported in this browser.");
       return;
     }
     const utterance = new SpeechSynthesisUtterance(summary);
     window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
-  };
+  }
 
   return (
-    <div style={{ fontFamily: "system-ui, Arial, sans-serif", maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
-      <h1 style={{ marginBottom: 8 }}>Mini Podcast Generator</h1>
-      <p style={{ marginTop: 0, color: "#555" }}>
-        Choose a topic. We’ll fetch recent articles, summarize them, and (optionally) play audio.
-      </p>
+    <div className="app">
+      <header className="app__header">
+        <div className="brand">
+          <span className="brand__logo">🎙️</span>
+          <h1 className="brand__title">Mini Podcast Generator</h1>
+        </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "16px 0 24px" }}>
-        {TOPICS.map((t) => (
+        <div className="header__right">
+          <span className="api-hint" title={`API: ${API_BASE}`}>API</span>
           <button
-            key={t}
-            onClick={() => fetchSummary(t)}
-            disabled={loading}
-            style={{
-              padding: "10px 14px",
-              borderRadius: 8,
-              border: "1px solid #ddd",
-              cursor: "pointer",
-              background: "#fafafa",
-            }}
+            className="toggle"
+            aria-label={dark ? "Switch to light mode" : "Switch to dark mode"}
+            onClick={() => setDark((d) => !d)}
           >
-            {t}
+            {dark ? "🌙" : "☀️"}
           </button>
-        ))}
-      </div>
+        </div>
+      </header>
 
-      {loading && <p>Loading…</p>}
-      {errorMsg && <p style={{ color: "crimson" }}>Error: {errorMsg}</p>}
-
-      {summary && (
-        <div style={{ marginTop: 16 }}>
-          <h3 style={{ marginBottom: 8 }}>Summary</h3>
-          <p style={{ lineHeight: 1.6 }}>{summary}</p>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-            <button
-              onClick={speakSummary}
-              style={{
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid #ddd",
-                cursor: "pointer",
-                background: "#f3f3f3",
-              }}
-            >
-              🔊 Speak (Browser TTS)
-            </button>
+      <main className="container">
+        <section className="card">
+          <h2 className="card__title">Choose a topic</h2>
+          <div className="chips">
+            {topics.map((t) => {
+              const isActive = activeTopic === t && loading;
+              return (
+                <button
+                  key={t}
+                  className={`chip ${activeTopic === t ? "chip--active" : ""}`}
+                  onClick={() => fetchSummary(t)}
+                  disabled={loading && isActive}
+                >
+                  {t}
+                  {isActive && <span className="chip__spinner" aria-hidden="true" />}
+                </button>
+              );
+            })}
           </div>
-        </div>
-      )}
 
-      {audioUrl && (
-        <div style={{ marginTop: 20 }}>
-          <h4 style={{ marginBottom: 8 }}>Audio</h4>
-          <audio controls style={{ width: "100%" }}>
-            <source src={audioUrl} type="audio/mpeg" />
-            Your browser does not support the audio element.
-          </audio>
-        </div>
-      )}
+          {loading && (
+            <div className="loading" role="status" aria-live="polite">
+              <div className="spinner" aria-hidden="true" />
+              Fetching & summarizing latest {activeTopic} news…
+            </div>
+          )}
 
-      <div style={{ marginTop: 28, fontSize: 12, color: "#666" }}>
-        <strong>API Base:</strong> {API_BASE}
-      </div>
+          {errorMsg && (
+            <div className="alert alert--error" role="alert" aria-live="assertive">
+              <strong>Error:</strong> {errorMsg}
+            </div>
+          )}
+
+          {!!summary && !loading && (
+            <div className="summary">
+              <div className="summary__header">
+                <h3>Summary</h3>
+                <div className="summary__actions">
+                  <button className="btn" onClick={speakSummary}>🔊 Speak</button>
+                  {audioUrl && (
+                    <a className="btn btn--ghost" href={audioUrl} download>
+                      ⤓ Download
+                    </a>
+                  )}
+                </div>
+              </div>
+
+              <p className="summary__text">{summary}</p>
+
+              {audioUrl && (
+                <div className="audio">
+                  <audio controls preload="none">
+                    <source src={audioUrl} type="audio/mpeg" />
+                    Your browser does not support the audio element.
+                  </audio>
+                </div>
+              )}
+            </div>
+          )}
+        </section>
+      </main>
+
+      <footer className="footer">
+        <span>Made for quick daily briefings.</span>
+      </footer>
     </div>
   );
 }
