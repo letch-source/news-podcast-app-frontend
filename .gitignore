@@ -21,3 +21,29 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# dependencies & builds
+node_modules/
+build/
+dist/
+coverage/
+.cache/
+parcel-cache/
+out/
+.next/
+.turbo/
+
+# environment & logs
+.env
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# editors/OS
+.vscode/
+.vs/
+.DS_Store
+Thumbs.db
+
+# misc
+*.vsidx
