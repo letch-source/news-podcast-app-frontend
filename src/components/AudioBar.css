@@ -1,0 +1,37 @@
+/* Fully scoped; no globals, no resets */
+.pn-audiobar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2147483647; /* sit above everything */
+  background: #ffffff;
+  border-top: 1px solid rgba(0,0,0,0.08);
+  box-shadow: 0 -6px 18px rgba(0,0,0,0.08);
+}
+
+.pn-audiobar__inner {
+  max-width: 1200px;      /* adjust if you use a different site max width */
+  margin: 0 auto;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pn-audiobar__meta {
+  flex: 1 1 auto;
+  min-width: 0;          /* enable truncation */
+  font-size: 14px;
+  font-weight: 600;
+  color: #111;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pn-audiobar__audio {
+  flex: 0 0 auto;
+  width: 320px;          /* keep compact so it doesn’t push layout */
+  max-width: 48vw;
+}
