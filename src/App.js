@@ -1,67 +1,119 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from "react";
 
-const topics = ['technology', 'sports', 'health', 'business', 'entertainment'];
+// Use env var in production, fall back to localhost for local dev
+const API_BASE = process.env.REACT_APP_API_URL || "http://localhost:4000";
+
+const TOPICS = ["technology", "sports", "health", "business", "entertainment"];
 
 export default function App() {
-  const [summary, setSummary] = useState('');
+  const [summary, setSummary] = useState("");
+  const [audioUrl, setAudioUrl] = useState("");
   const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState("");
 
-  const speakSummary = (text) => {
+  const fetchSummary = async (topic) => {
+    setLoading(true);
+    setErrorMsg("");
+    setSummary("");
+    setAudioUrl("");
+
+    try {
+      const res = await fetch(`${API_BASE}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Request failed with ${res.status}`);
+      }
+
+      const data = await res.json();
+      setSummary(data.summary || "No summary returned.");
+      if (data.audioUrl) setAudioUrl(data.audioUrl);
+    } catch (e) {
+      setErrorMsg(e.message || "Error fetching summary.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const speakSummary = () => {
+    if (!summary) return;
     if (!window.speechSynthesis) {
-      alert('Sorry, your browser does not support Text-to-Speech.');
+      alert("Text-to-Speech not supported in this browser.");
       return;
     }
-    const utterance = new SpeechSynthesisUtterance(text);
-    window.speechSynthesis.cancel(); // Stop any current speech
+    const utterance = new SpeechSynthesisUtterance(summary);
+    window.speechSynthesis.cancel();
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleClick = async (topic) => {
-    setLoading(true);
-    setSummary('');
-    try {
-      const res = await fetch('http://localhost:4000/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topic }),
-      });
-      const data = await res.json();
-      if (data.summary) {
-        setSummary(data.summary);
-        speakSummary(data.summary);
-      } else {
-        setSummary('No summary available.');
-      }
-    } catch (err) {
-      setSummary('Error fetching summary.');
-    }
-    setLoading(false);
-  };
-
   return (
-    <div style={{ fontFamily: 'Arial, sans-serif', maxWidth: 600, margin: 'auto', padding: 20 }}>
-      <h1>Mini Podcast Generator</h1>
-      <p>Click a topic to get a short podcast summary:</p>
-      <div style={{ marginBottom: 20 }}>
-        {topics.map((topic) => (
+    <div style={{ fontFamily: "system-ui, Arial, sans-serif", maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
+      <h1 style={{ marginBottom: 8 }}>Mini Podcast Generator</h1>
+      <p style={{ marginTop: 0, color: "#555" }}>
+        Choose a topic. We’ll fetch recent articles, summarize them, and (optionally) play audio.
+      </p>
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "16px 0 24px" }}>
+        {TOPICS.map((t) => (
           <button
-            key={topic}
-            onClick={() => handleClick(topic)}
+            key={t}
+            onClick={() => fetchSummary(t)}
             disabled={loading}
-            style={{ marginRight: 10, padding: '8px 16px', cursor: 'pointer' }}
+            style={{
+              padding: "10px 14px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              cursor: "pointer",
+              background: "#fafafa",
+            }}
           >
-            {topic}
+            {t}
           </button>
         ))}
       </div>
-      {loading && <p>Loading summary...</p>}
+
+      {loading && <p>Loading…</p>}
+      {errorMsg && <p style={{ color: "crimson" }}>Error: {errorMsg}</p>}
+
       {summary && (
-        <>
-          <h3>Summary:</h3>
-          <p>{summary}</p>
-        </>
+        <div style={{ marginTop: 16 }}>
+          <h3 style={{ marginBottom: 8 }}>Summary</h3>
+          <p style={{ lineHeight: 1.6 }}>{summary}</p>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button
+              onClick={speakSummary}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid #ddd",
+                cursor: "pointer",
+                background: "#f3f3f3",
+              }}
+            >
+              🔊 Speak (Browser TTS)
+            </button>
+          </div>
+        </div>
       )}
+
+      {audioUrl && (
+        <div style={{ marginTop: 20 }}>
+          <h4 style={{ marginBottom: 8 }}>Audio</h4>
+          <audio controls style={{ width: "100%" }}>
+            <source src={audioUrl} type="audio/mpeg" />
+            Your browser does not support the audio element.
+          </audio>
+        </div>
+      )}
+
+      <div style={{ marginTop: 28, fontSize: 12, color: "#666" }}>
+        <strong>API Base:</strong> {API_BASE}
+      </div>
     </div>
   );
 }
-
