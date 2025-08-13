@@ -1,7 +1,10 @@
 ﻿import React, { useRef, useState, useMemo } from "react";
 
-// In dev, CRA proxy will forward /api/* to http://localhost:3001
-const API_BASE = ""; // keep empty in dev
+// Use proxy locally; use full URL in production via REACT_APP_API_BASE
+const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? (process.env.REACT_APP_API_BASE || "")
+    : "";
 
 const TOPICS = [
   { key: "business", label: "Business" },
@@ -17,19 +20,15 @@ export default function App() {
   const [status, setStatus] = useState("Pick topics, then build a summary.");
   const [isLoading, setIsLoading] = useState(false);
 
-  // Per-item list (optional; may include per-article bullets)
-  const [items, setItems] = useState([]); // [{id,title,summary,audioUrl,topic?}]
-  // Combined mega-summary
+  const [items, setItems] = useState([]);       // optional list
   const [combined, setCombined] = useState(null); // {id,title,summary,audioUrl}
 
-  // Audio
   const [nowPlaying, setNowPlaying] = useState(null); // { title, audioUrl }
   const audioRef = useRef(null);
 
-  // Topic selection
   const [selected, setSelected] = useState(() => new Set());
-  const selectedCount = selected.size;
   const selectedList = useMemo(() => Array.from(selected), [selected]);
+  const selectedCount = selectedList.length;
 
   function toggleTopic(key) {
     setCombined(null);
@@ -37,8 +36,7 @@ export default function App() {
     setStatus("Configuring…");
     setSelected((prev) => {
       const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
+      next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
   }
@@ -59,11 +57,8 @@ export default function App() {
 
       const endpoint =
         selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
-
       const body =
-        selectedCount === 1
-          ? { topic: selectedList[0] }
-          : { topics: selectedList };
+        selectedCount === 1 ? { topic: selectedList[0] } : { topics: selectedList };
 
       const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
@@ -73,28 +68,20 @@ export default function App() {
 
       const text = await res.text();
       let data = null;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        /* ignore */
-      }
+      try { data = JSON.parse(text); } catch {}
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${text || "Server error"}`);
       if (!data) throw new Error(`Bad payload: ${text || "empty response"}`);
 
-      // Preferred shape for batch: { combined, items? }
-      // For single: { items: [...] } — keep backward compatible
       if (data.combined) setCombined(data.combined);
       if (Array.isArray(data.items)) setItems(data.items);
 
       if (!data.combined && Array.isArray(data.items) && data.items.length > 0) {
-        // Back-compat: treat the first item as the "combined" card if none provided
         setCombined({
           id: data.items[0].id ?? "combined-0",
           title: data.items[0].title ?? "Summary",
           summary:
-            typeof data.items[0].summary === "string" &&
-            data.items[0].summary.trim()
+            typeof data.items[0].summary === "string" && data.items[0].summary.trim()
               ? data.items[0].summary
               : "(No summary provided by server.)",
           audioUrl: data.items[0].audioUrl ?? null,
@@ -114,23 +101,17 @@ export default function App() {
   }
 
   function handlePlay(item) {
-    if (!item?.audioUrl) {
-      console.log("No audioUrl on item; nothing to play.");
-      return;
-    }
+    if (!item?.audioUrl) return;
     setNowPlaying({ title: item.title, audioUrl: item.audioUrl });
     setTimeout(() => {
-      const el = audioRef.current;
-      if (!el) return;
-      el.play().catch((e) => {
-        console.log("Audio play() was blocked or failed:", e?.message || e);
-      });
+      audioRef.current?.play().catch((e) =>
+        console.log("Audio play() blocked/failed:", e?.message || e)
+      );
     }, 0);
   }
 
   return (
     <div style={styles.page}>
-      {/* Header */}
       <header style={styles.header}>
         <div style={styles.container}>
           <h1 style={styles.h1}>Podcast News</h1>
@@ -138,7 +119,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Topic chips */}
       <div style={{ ...styles.container, ...styles.topicsRow }}>
         {TOPICS.map((t) => {
           const active = selected.has(t.key);
@@ -160,7 +140,6 @@ export default function App() {
         })}
       </div>
 
-      {/* Actions */}
       <div style={{ ...styles.container, ...styles.actions }}>
         <button
           onClick={buildCombined}
@@ -194,9 +173,7 @@ export default function App() {
         )}
       </div>
 
-      {/* Results */}
       <main style={styles.container}>
-        {/* Combined card */}
         {combined && (
           <div style={styles.card}>
             <div style={styles.cardHeader}>
@@ -215,7 +192,6 @@ export default function App() {
           </div>
         )}
 
-        {/* Optional per-item list */}
         {Array.isArray(items) && items.length > 0 && (
           <ul style={styles.grid}>
             {items.map((it) => (
@@ -247,7 +223,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Bottom audio bar — only render when we have audio to play */}
       {nowPlaying?.audioUrl ? (
         <footer style={styles.footer}>
           <div style={styles.footerInner}>
@@ -270,7 +245,6 @@ export default function App() {
   );
 }
 
-/* ---------- minimal inline styles (works even without Tailwind) ---------- */
 const styles = {
   page: {
     minHeight: "100vh",
@@ -316,7 +290,7 @@ const styles = {
     gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
     listStyle: "none",
     padding: 0,
-    margin: "12px 0 80px 0", // space above footer
+    margin: "12px 0 80px 0",
   },
   card: {
     border: "1px solid #e5e7eb",
