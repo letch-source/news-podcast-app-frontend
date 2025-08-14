@@ -29,6 +29,9 @@ const TOPICS = [
   { key: "world", label: "World" },
 ];
 
+// Height of the fixed footer so content doesn't get hidden underneath
+const FOOTER_HEIGHT = 68;
+
 export default function App() {
   const [status, setStatus] = useState("Pick topics, then build a summary.");
   const [isLoading, setIsLoading] = useState(false);
@@ -146,7 +149,7 @@ export default function App() {
         </div>
       </header>
 
-      <main style={styles.container}>
+      <main style={styles.main}>
         {/* Topic chips */}
         <div style={styles.topicsRow}>
           {TOPICS.map((t) => {
@@ -239,8 +242,8 @@ export default function App() {
         )}
       </main>
 
-      {/* Sticky footer audio bar */}
-      <footer style={styles.footer}>
+      {/* Fixed footer audio bar */}
+      <footer style={styles.footer} role="contentinfo">
         <div style={styles.footerInner}>
           <div style={styles.nowPlaying}>
             {nowPlaying?.title ? `Now playing: ${nowPlaying.title}` : "Nothing playing"}
@@ -265,8 +268,9 @@ const styles = {
     background: "#fff",
     fontFamily:
       'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif',
+    paddingBottom: FOOTER_HEIGHT, // ensures content never hides under fixed footer
   },
-  container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
+  main: { maxWidth: 960, margin: "0 auto", padding: "16px" },
   header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
   h1: { fontSize: 22, fontWeight: 600, margin: 0 },
   status: { color: "#6b7280", marginTop: 6, fontSize: 14 },
@@ -333,11 +337,19 @@ const styles = {
   },
   summary: { color: "#374151", fontSize: 14, margin: 0 },
 
+  // Fixed footer
   footer: {
-    position: "sticky",
+    position: "fixed",
+    left: 0,
+    right: 0,
     bottom: 0,
+    width: "100%",
     background: "#fff",
     borderTop: "1px solid #e5e7eb",
+    zIndex: 100,
+    height: FOOTER_HEIGHT,
+    display: "flex",
+    alignItems: "center",
   },
   footerInner: {
     maxWidth: 960,
@@ -346,6 +358,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     gap: 12,
+    width: "100%",
   },
   nowPlaying: {
     flex: "1 1 auto",
