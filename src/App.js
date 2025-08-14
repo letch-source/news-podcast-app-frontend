@@ -1,205 +1,247 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useRef, useState } from "react";
 
-// If your backend is same-origin in prod, leave blank.
-// For local dev with a separate server, set REACT_APP_API_BASE in .env (e.g., http://localhost:5000)
-const BACKEND_URL = process.env.REACT_APP_API_BASE || "";
+// In dev, CRA proxy will forward /api/* to http://localhost:3001
+const API_BASE = ""; // leave empty in dev
 
-// ---- Safe JSON POST helper: always reads body and throws readable errors ----
-async function postJson(url, payload) {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload ?? {}),
-  });
-
-  const contentType = res.headers.get("content-type") || "";
-  const raw = await res.text(); // read once; parse later if JSON
-
-  let data = null;
-  if (contentType.includes("application/json") && raw) {
-    try {
-      data = JSON.parse(raw);
-    } catch (_) {
-      /* fall through */
-    }
-  }
-
-  if (!res.ok) {
-    throw new Error(
-      `HTTP ${res.status} ${res.statusText} — ${raw.slice(0, 400) || "no body"}`
-    );
-  }
-  if (!data) {
-    throw new Error(`Expected JSON but got: ${raw.slice(0, 400) || "empty body"}`);
-  }
-  return data;
-}
-
-// Fixed bottom audio bar
-function AudioBar({ src }) {
-  if (!src) return null;
-  return (
-    <div
-      style={{
-        position: "fixed",
-        left: 0,
-        right: 0,
-        bottom: 0,
-        padding: "12px 16px",
-        background: "rgba(255,255,255,0.95)",
-        borderTop: "1px solid #e5e7eb",
-        boxShadow: "0 -4px 10px rgba(0,0,0,0.06)",
-        zIndex: 50,
-      }}
-    >
-      <audio src={src} controls style={{ width: "100%" }} />
-    </div>
-  );
-}
+const TOPICS = [
+  { key: "business", label: "Business" },
+  { key: "technology", label: "Technology" },
+  { key: "sports", label: "Sports" },
+  { key: "entertainment", label: "Entertainment" },
+  { key: "science", label: "Science" },
+  { key: "world", label: "World" },
+];
 
 export default function App() {
-  const [topic, setTopic] = useState("business");
-  const [customText, setCustomText] = useState("");
-  const [audioUrl, setAudioUrl] = useState("");
-  const [summary, setSummary] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
-  const [useKnownGood, setUseKnownGood] = useState(false);
+  const [status, setStatus] = useState("Pick a topic to fetch & summarize.");
+  const [isLoading, setIsLoading] = useState(false);
+  const [items, setItems] = useState([]); // [{id,title,summary,audioUrl}]
+  const [nowPlaying, setNowPlaying] = useState(null); // { title, audioUrl }
+  const audioRef = useRef(null);
 
-  // Known-good MP3 for isolating front-end audio problems
-  const KNOWN_GOOD_MP3 =
-    "https://file-examples.com/storage/fef4e8f6f2f3c6b6c3a6f0e/2017/11/file_example_MP3_700KB.mp3";
-
-  async function handleSummarize() {
-    setErr("");
-    setLoading(true);
-    setSummary("");
-    setAudioUrl("");
-
+  async function fetchSummaries(topic) {
     try {
-      if (useKnownGood) {
-        setAudioUrl(KNOWN_GOOD_MP3);
-        setSummary("(diagnostic) Playing known-good MP3.");
-        return;
-      }
+      setIsLoading(true);
+      setStatus(`Fetching & summarizing latest ${topic} news…`);
 
-      const data = await postJson(`${BACKEND_URL}/api/summarize`, {
-        topic: topic.trim(),
-        text: customText.trim() || undefined,
+      const res = await fetch(`${API_BASE}/api/summarize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic }),
       });
 
-      const url =
-        data?.combined?.audioUrl ??
-        data?.audioUrl ??
-        data?.result?.audioUrl ??
-        "";
-
-      if (!url) {
-        throw new Error("Server responded but missing combined.audioUrl");
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        data = null;
       }
 
-      setSummary(data?.combined?.summary || "");
-      setAudioUrl(url);
-    } catch (e) {
-      console.error("Audio error:", e);
-      setErr(String(e?.message || e));
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text || "Server error"}`);
+      if (!data || !Array.isArray(data.items)) throw new Error(`Bad payload: ${text || "missing items[]"}`);
+
+      const normalized = data.items.map((it, i) => ({
+        id: it.id ?? `item-${i}`,
+        title: it.title ?? "Untitled",
+        summary:
+          typeof it.summary === "string" && it.summary.trim()
+            ? it.summary
+            : "(No summary provided by server.)",
+        audioUrl: it.audioUrl ?? null, // will be null until TTS is wired
+      }));
+
+      setItems(normalized);
+      setStatus(`Showing ${topic} summaries`);
+
+      // Clear the player if nothing has audio
+      if (!normalized.some(x => x.audioUrl)) {
+        setNowPlaying(null);
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(err);
+      setItems([]);
+      setNowPlaying(null);
+      setStatus(`Error: ${err.message}`);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   }
 
-  // basic UI
+  function handlePlay(item) {
+    if (!item?.audioUrl) {
+      // No audio yet; do nothing
+      return;
+    }
+    setNowPlaying({ title: item.title, audioUrl: item.audioUrl });
+    setTimeout(() => {
+      audioRef.current?.play().catch(() => {});
+    }, 0);
+  }
+
   return (
-    <div style={{ maxWidth: 720, margin: "40px auto", padding: "0 16px" }}>
-      <h1 style={{ marginBottom: 8 }}>Podcast News — Summarize to Audio</h1>
-      <p style={{ color: "#6b7280", marginBottom: 24 }}>
-        Generates a summary and returns <code>combined.audioUrl</code> from{" "}
-        <code>POST /api/summarize</code>.
-      </p>
-
-      <label style={{ display: "block", fontWeight: 600, marginBottom: 8 }}>
-        Topic
-      </label>
-      <select
-        value={topic}
-        onChange={(e) => setTopic(e.target.value)}
-        style={{ padding: 8, marginBottom: 16 }}
-      >
-        <option value="business">Business</option>
-        <option value="technology">Technology</option>
-        <option value="world">World</option>
-        <option value="science">Science</option>
-        <option value="sports">Sports</option>
-      </select>
-
-      <label style={{ display: "block", fontWeight: 600, marginBottom: 8 }}>
-        (Optional) Custom text to summarize
-      </label>
-      <textarea
-        rows={6}
-        placeholder="Paste your own text to summarize (optional)"
-        value={customText}
-        onChange={(e) => setCustomText(e.target.value)}
-        style={{ width: "100%", padding: 8, marginBottom: 16 }}
-      />
-
-      <label style={{ display: "flex", alignItems: "center", gap: 8, margin: "6px 0 16px" }}>
-        <input
-          type="checkbox"
-          checked={useKnownGood}
-          onChange={(e) => setUseKnownGood(e.target.checked)}
-        />
-        Use known-good test MP3 (diagnostic)
-      </label>
-
-      <button
-        onClick={handleSummarize}
-        disabled={loading}
-        style={{
-          padding: "10px 14px",
-          fontWeight: 600,
-          borderRadius: 8,
-          border: "1px solid #111827",
-          background: loading ? "#e5e7eb" : "#111827",
-          color: loading ? "#111827" : "white",
-          cursor: loading ? "default" : "pointer",
-        }}
-      >
-        {loading ? "Working…" : "Summarize & Generate Audio"}
-      </button>
-
-      {err && (
-        <pre
-          style={{
-            marginTop: 16,
-            padding: 12,
-            background: "#fff7ed",
-            border: "1px solid #fed7aa",
-            borderRadius: 8,
-            whiteSpace: "pre-wrap",
-          }}
-        >
-          {err}
-        </pre>
-      )}
-
-      {summary && (
-        <div
-          style={{
-            marginTop: 16,
-            padding: 12,
-            background: "#f9fafb",
-            border: "1px solid #e5e7eb",
-            borderRadius: 8,
-          }}
-        >
-          <strong>Summary</strong>
-          <p style={{ marginTop: 8 }}>{summary}</p>
+    <div style={styles.page}>
+      {/* Header */}
+      <header style={styles.header}>
+        <div style={styles.container}>
+          <h1 style={styles.h1}>Podcast News</h1>
+          <p style={styles.status}>{status}</p>
         </div>
-      )}
+      </header>
 
-      <AudioBar src={audioUrl} />
-      <div style={{ height: 80 }} />
+      {/* Topic buttons */}
+      <div style={{ ...styles.container, ...styles.topicsRow }}>
+        {TOPICS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => fetchSummaries(t.key)}
+            disabled={isLoading}
+            style={{
+              ...styles.chip,
+              opacity: isLoading ? 0.6 : 1,
+              cursor: isLoading ? "not-allowed" : "pointer",
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Results */}
+      <main style={styles.container}>
+        {items.length === 0 && !isLoading && (
+          <div style={{ color: "#6b7280", marginTop: 8 }}>
+            No items yet. Choose a topic above.
+          </div>
+        )}
+
+        <ul style={styles.grid}>
+          {items.map((it) => (
+            <li key={it.id} style={styles.card}>
+              <div style={styles.cardHeader}>
+                <div style={{ fontWeight: 600, lineHeight: 1.3 }}>{it.title}</div>
+                {it.audioUrl ? (
+                  <button
+                    onClick={() => handlePlay(it)}
+                    style={styles.playButton}
+                    title="Play this summary"
+                  >
+                    Play
+                  </button>
+                ) : null}
+              </div>
+              <p style={styles.summary}>{it.summary}</p>
+            </li>
+          ))}
+        </ul>
+      </main>
+
+      {/* Bottom audio bar — only shows when there is audio */}
+      {nowPlaying?.audioUrl ? (
+        <footer style={styles.footer}>
+          <div style={styles.footerInner}>
+            <div style={styles.nowPlaying} title={nowPlaying.title || ""}>
+              {nowPlaying.title || "Now Playing"}
+            </div>
+            <audio
+              ref={audioRef}
+              controls
+              src={nowPlaying.audioUrl}
+              style={styles.audioEl}
+              onError={(e) => console.log("Audio error", e.currentTarget?.error)}
+              onCanPlay={() => console.log("Audio can play")}
+              onPlay={() => console.log("Playing")}
+            />
+          </div>
+        </footer>
+      ) : null}
     </div>
   );
 }
+
+/* ---------- minimal inline styles (no Tailwind needed) ---------- */
+const styles = {
+  page: {
+    minHeight: "100vh",
+    display: "flex",
+    flexDirection: "column",
+    background: "#fff",
+    fontFamily:
+      'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif',
+  },
+  container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
+  header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
+  h1: { fontSize: 22, fontWeight: 600, margin: 0 },
+  status: { color: "#6b7280", marginTop: 6, fontSize: 14 },
+  topicsRow: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    borderBottom: "1px solid #e5e7eb",
+    paddingTop: 12,
+    paddingBottom: 12,
+  },
+  chip: {
+    padding: "6px 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: 9999,
+    background: "#fff",
+  },
+  grid: {
+    display: "grid",
+    gap: 12,
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    listStyle: "none",
+    padding: 0,
+    margin: "12px 0 80px 0",
+  },
+  card: {
+    border: "1px solid #e5e7eb",
+    borderRadius: 12,
+    padding: 16,
+    background: "#fff",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
+  },
+  cardHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    justifyContent: "space-between",
+    marginBottom: 8,
+  },
+  playButton: {
+    fontSize: 12,
+    padding: "6px 10px",
+    border: "1px solid #d1d5db",
+    borderRadius: 8,
+    background: "#fff",
+    cursor: "pointer",
+  },
+  summary: { color: "#374151", fontSize: 14, margin: 0 },
+  footer: {
+    position: "sticky",
+    bottom: 0,
+    background: "#fff",
+    borderTop: "1px solid #e5e7eb",
+  },
+  footerInner: {
+    maxWidth: 960,
+    margin: "0 auto",
+    padding: 12,
+    display: "flex",
+    alignItems: "center",
+    gap: 12,
+  },
+  nowPlaying: {
+    flex: "1 1 auto",
+    minWidth: 0,
+    fontWeight: 600,
+    fontSize: 14,
+    color: "#111",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+  audioEl: { width: 320, maxWidth: "48vw" },
+};
