@@ -1,23 +1,17 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useRef, useState } from "react";
 
 /**
- * --- App.js ---
+ * --- App.js --- (POST JSON to /api/tts)
  * Podcast News — resilient audio playback
  *
- * What this adds:
- * 1) A bulletproof <AudioBar/> that:
- *    - Awaits play() and surfaces real errors
- *    - Unlocks audio on first user gesture (Safari/iOS)
- *    - Handles URL vs Blob, calls load() before play(), revokes old Blob URLs
- *    - Exposes status so you can see what's happening
- * 2) Example wiring for fetching TTS audio as a Blob from your API
- * 3) A "Test known-good MP3" toggle to isolate source vs player issues
+ * This version calls your backend with **POST /api/tts** and body { text }
+ * You also keep the diagnostic "known-good MP3" toggle.
  */
 
 // === Configure your backend endpoints here ===
+// If API is same-origin, leave as "". If separate host, set REACT_APP_API_BASE in .env
 const BACKEND_URL = process.env.REACT_APP_API_BASE || ""; // e.g. "https://your-api.example.com"
-// Example: GET /api/tts?text=...  -> returns audio/mpeg (MP3) bytes
-const TTS_PATH = "/api/tts"; // adjust to match your server
+const TTS_PATH = "/api/tts"; // We will POST JSON to this path
 
 // Public test MP3 (for quick isolation)
 const KNOWN_GOOD_MP3 =
@@ -150,10 +144,10 @@ export default function App() {
   const [error, setError] = useState(null);
   const [useKnownGood, setUseKnownGood] = useState(false);
 
-  // Example: when topic selected, fetch TTS audio from your API
   useEffect(() => {
     const fetchAudio = async () => {
       if (!selectedTopic) return;
+
       if (useKnownGood) {
         setAudioSrc(KNOWN_GOOD_MP3);
         return;
@@ -163,38 +157,33 @@ export default function App() {
       setError(null);
 
       try {
-        // Example call: /api/tts?text=...  -> should return audio/mpeg bytes
-        const url = `${BACKEND_URL}${TTS_PATH}?text=${encodeURIComponent(
-          `Latest ${selectedTopic} news summary`
-        )}`;
-
-        const res = await fetch(url, {
-          method: "GET",
-          // If your API requires credentials, adjust here, but keep CORS in mind
-          // credentials: "include",
+        // POST JSON to your TTS endpoint
+        const res = await fetch(`${BACKEND_URL}${TTS_PATH}`, {
+          method: "POST",
           headers: {
+            "Content-Type": "application/json",
             Accept: "audio/mpeg, audio/wav, audio/ogg, */*",
           },
+          body: JSON.stringify({ text: `Latest ${selectedTopic} news summary` }),
         });
 
         if (!res.ok) {
           throw new Error(`TTS request failed: ${res.status} ${res.statusText}`);
         }
 
-        // Validate MIME if provided
         const ctype = res.headers.get("Content-Type") || "";
         if (!ctype.startsWith("audio/")) {
           console.warn("Unexpected Content-Type:", ctype);
-          // Still try to play; some servers omit headers. But log it.
         }
 
         const blob = await res.blob();
         if (blob.size === 0) throw new Error("Empty audio Blob");
 
-        setAudioSrc(blob); // AudioBar accepts Blob or URL
+        setAudioSrc(blob);
       } catch (e) {
         console.error(e);
         setError(e.message || String(e));
+        setAudioSrc(null);
       } finally {
         setLoadingAudio(false);
       }
@@ -245,13 +234,12 @@ export default function App() {
           {selectedTopic ? (
             <div>
               <h2 style={{ marginTop: 0 }}>{selectedTopic} summary</h2>
-              {loadingAudio && <div style={{ opacity: 0.8 }}>Fetching audio…</div>}
+              {loadingAudio && <div style={{ opacity: 0.8 }}>Generating audio…</div>}
               {error && (
                 <div style={{ color: "#FCA5A5" }}>
                   Audio error: {error}
                   <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-                    Check your API returns <code>Content-Type: audio/mpeg</code>, allows CORS, and avoids
-                    <code> Content-Disposition: attachment</code>.
+                    Ensure your server handles <code>POST {TTS_PATH}</code>, returns <code>Content-Type: audio/mpeg</code>, and that API routes are defined before the SPA fallback.
                   </div>
                 </div>
               )}
