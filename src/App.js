@@ -1,174 +1,90 @@
-﻿import React, { useRef, useState } from "react";
+﻿﻿import React, { useRef, useState, useMemo } from "react";
 
-// Always call your live backend in production, local in dev
+// Use proxy locally; use full URL in production via REACT_APP_API_BASE
 const API_BASE =
   process.env.NODE_ENV === "production"
-    ? "https://fetch-bpof.onrender.com"
+    ? (process.env.REACT_APP_API_BASE || "")
     : "";
+// PRODUCTION base (hardcoded for reliability); DEV uses proxy
+const PROD_API_BASE = "https://fetch-bpof.onrender.com";
+const API_BASE = process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
 
 const TOPICS = [
-  { key: "business", label: "Business" },
-  { key: "technology", label: "Technology" },
-  { key: "sports", label: "Sports" },
-  { key: "entertainment", label: "Entertainment" },
-  { key: "science", label: "Science" },
-  { key: "world", label: "World" },
-];
-
+{ key: "business", label: "Business" },
+@@ -19,11 +17,9 @@ const TOPICS = [
 export default function App() {
-  const [status, setStatus] = useState("Pick a topic to fetch & summarize.");
-  const [isLoading, setIsLoading] = useState(false);
-  const [items, setItems] = useState([]); // [{id,title,summary,audioUrl}]
+const [status, setStatus] = useState("Pick topics, then build a summary.");
+const [isLoading, setIsLoading] = useState(false);
+
+  const [items, setItems] = useState([]);       // optional list
+  const [combined, setCombined] = useState(null); // {id,title,summary,audioUrl}
+
   const [nowPlaying, setNowPlaying] = useState(null); // { title, audioUrl }
-  const audioRef = useRef(null);
+  const [items, setItems] = useState([]);
+  const [combined, setCombined] = useState(null);
+  const [nowPlaying, setNowPlaying] = useState(null);
+const audioRef = useRef(null);
 
-  async function fetchSummaries(topic) {
-    try {
-      setIsLoading(true);
-      setStatus(`Fetching & summarizing latest ${topic} news…`);
+const [selected, setSelected] = useState(() => new Set());
+@@ -43,7 +39,6 @@ export default function App() {
 
-      const res = await fetch(`${API_BASE}/api/summarize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic }),
-      });
+async function buildCombined() {
+if (selectedCount === 0) return;
 
+try {
+setIsLoading(true);
+setItems([]);
+@@ -55,23 +50,26 @@ export default function App() {
+: `Building a combined summary for ${selectedCount} topics…`
+);
+
+      const endpoint =
+        selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
+      const body =
+        selectedCount === 1 ? { topic: selectedList[0] } : { topics: selectedList };
+      const endpoint = selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
+      const body = selectedCount === 1 ? { topic: selectedList[0] } : { topics: selectedList };
+      const url = `${API_BASE}${endpoint}`;
+
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+      const res = await fetch(url, {
+method: "POST",
+headers: { "Content-Type": "application/json" },
+body: JSON.stringify(body),
+});
+
+      const text = await res.text();
       const raw = await res.text();
-      let data = null;
+let data = null;
+      try { data = JSON.parse(text); } catch {}
       try { data = JSON.parse(raw); } catch {}
 
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text || "Server error"}`);
+      if (!data) throw new Error(`Bad payload: ${text || "empty response"}`);
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${raw || "Server error"}`);
+        throw new Error(`HTTP ${res.status} from ${url}: ${raw || "Server error"}`);
       }
       if (!data) {
-        throw new Error(`Bad payload: empty response`);
+        throw new Error(`Bad payload from ${url}: empty response`);
       }
 
-      // Accept both shapes
-      let list = Array.isArray(data.items) ? data.items : [];
-      if (!list.length && data.combined) {
-        const c = data.combined;
-        list = [{
-          id: c.id ?? "combined-0",
-          title: c.title ?? "Summary",
-          summary: typeof c.summary === "string" ? c.summary : "(No summary provided by server.)",
-          audioUrl: c.audioUrl ?? null,
-        }];
-      }
-
-      if (!list.length) {
-        throw new Error(
-          `Bad payload: missing items[]. Server said: ${typeof raw === "string" ? raw.slice(0, 200) : ""}`
-        );
-      }
-
-      const normalized = list.map((it, i) => ({
-        id: it.id ?? `item-${i}`,
-        title: it.title ?? "Untitled",
-        summary: typeof it.summary === "string" && it.summary.trim()
-          ? it.summary
-          : "(No summary provided by server.)",
-        audioUrl: it.audioUrl ?? null,
-      }));
-
-      setItems(normalized);
-      setStatus(`Showing ${topic} summaries`);
-
-      if (!normalized.some(x => x.audioUrl)) {
-        setNowPlaying(null);
-      }
-    } catch (err) {
-      console.error(err);
-      setItems([]);
-      setNowPlaying(null);
-      setStatus(`Error: ${err.message}`);
-    } finally {
-      setIsLoading(false);
-    }
-  }
-
-  function handlePlay(item) {
-    if (!item?.audioUrl) return;
-    setNowPlaying({ title: item.title, audioUrl: item.audioUrl });
-    setTimeout(() => {
-      audioRef.current?.play().catch(() => {});
-    }, 0);
-  }
-
-  return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.container}>
-          <h1 style={styles.h1}>Podcast News</h1>
-          <p style={styles.status}>{status}</p>
-        </div>
-      </header>
-
-      <div style={{ ...styles.container, ...styles.topicsRow }}>
-        {TOPICS.map((t) => (
-          <button
-            key={t.key}
-            onClick={() => fetchSummaries(t.key)}
-            disabled={isLoading}
-            style={{
-              ...styles.chip,
-              opacity: isLoading ? 0.6 : 1,
-              cursor: isLoading ? "not-allowed" : "pointer",
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <main style={styles.container}>
-        {items.length === 0 && !isLoading && (
-          <div style={{ color: "#6b7280", marginTop: 8 }}>
-            No items yet. Choose a topic above.
-          </div>
-        )}
-
-        <ul style={styles.grid}>
-          {items.map((it) => (
-            <li key={it.id} style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div style={{ fontWeight: 600, lineHeight: 1.3 }}>{it.title}</div>
-                {it.audioUrl ? (
-                  <button
-                    onClick={() => handlePlay(it)}
-                    style={styles.playButton}
-                    title="Play this summary"
-                  >
-                    Play
-                  </button>
-                ) : null}
-              </div>
-              <p style={styles.summary}>{it.summary}</p>
-            </li>
-          ))}
-        </ul>
-      </main>
-
-      {nowPlaying?.audioUrl ? (
-        <footer style={styles.footer}>
-          <div style={styles.footerInner}>
-            <div style={styles.nowPlaying} title={nowPlaying.title || ""}>
-              {nowPlaying.title || "Now Playing"}
-            </div>
-            <audio
-              ref={audioRef}
-              controls
-              src={nowPlaying.audioUrl}
-              style={styles.audioEl}
-              onError={(e) => console.log("Audio error", e.currentTarget?.error)}
-              onCanPlay={() => console.log("Audio can play")}
-              onPlay={() => console.log("Playing")}
-            />
-          </div>
-        </footer>
-      ) : null}
-    </div>
-  );
+if (data.combined) setCombined(data.combined);
+if (Array.isArray(data.items)) setItems(data.items);
+@@ -80,10 +78,9 @@ export default function App() {
+setCombined({
+id: data.items[0].id ?? "combined-0",
+title: data.items[0].title ?? "Summary",
+          summary:
+            typeof data.items[0].summary === "string" && data.items[0].summary.trim()
+              ? data.items[0].summary
+              : "(No summary provided by server.)",
+          summary: typeof data.items[0].summary === "string" && data.items[0].summary.trim()
+            ? data.items[0].summary
+            : "(No summary provided by server.)",
+audioUrl: data.items[0].audioUrl ?? null,
+});
+}
+@@ -246,98 +243,29 @@ export default function App() {
 }
 
 const styles = {
@@ -180,10 +96,12 @@ const styles = {
     fontFamily:
       'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif',
   },
-  container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
-  header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
-  h1: { fontSize: 22, fontWeight: 600, margin: 0 },
-  status: { color: "#6b7280", marginTop: 6, fontSize: 14 },
+  page: { minHeight: "100vh", display: "flex", flexDirection: "column", background: "#fff",
+    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif' },
+container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
+header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
+h1: { fontSize: 22, fontWeight: 600, margin: 0 },
+status: { color: "#6b7280", marginTop: 6, fontSize: 14 },
   topicsRow: {
     display: "flex",
     gap: 8,
@@ -196,6 +114,22 @@ const styles = {
     padding: "6px 12px",
     border: "1px solid #d1d5db",
     borderRadius: 9999,
+    background: "#fff",
+  },
+  chipActive: {
+    background: "#111",
+    color: "#fff",
+    borderColor: "#111",
+  },
+  topicsRow: { display: "flex", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #e5e7eb",
+    paddingTop: 12, paddingBottom: 12 },
+  chip: { padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 9999, background: "#fff" },
+  chipActive: { background: "#111", color: "#fff", borderColor: "#111" },
+actions: { display: "flex", gap: 8, paddingTop: 8 },
+  actionBtn: {
+    padding: "8px 12px",
+    border: "1px solid #d1d5db",
+    borderRadius: 10,
     background: "#fff",
   },
   grid: {
@@ -228,7 +162,15 @@ const styles = {
     background: "#fff",
     cursor: "pointer",
   },
-  summary: { color: "#374151", fontSize: 14, margin: 0 },
+  actionBtn: { padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff" },
+  grid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    listStyle: "none", padding: 0, margin: "12px 0 80px 0" },
+  card: { border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.02)" },
+  cardHeader: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginBottom: 8 },
+  playButton: { fontSize: 12, padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff",
+    cursor: "pointer" },
+summary: { color: "#374151", fontSize: 14, margin: 0 },
   footer: {
     position: "sticky",
     bottom: 0,
@@ -253,5 +195,9 @@ const styles = {
     overflow: "hidden",
     textOverflow: "ellipsis",
   },
-  audioEl: { width: 320, maxWidth: "48vw" },
+  footer: { position: "sticky", bottom: 0, background: "#fff", borderTop: "1px solid #e5e7eb" },
+  footerInner: { maxWidth: 960, margin: "0 auto", padding: 12, display: "flex", alignItems: "center", gap: 12 },
+  nowPlaying: { flex: "1 1 auto", minWidth: 0, fontWeight: 600, fontSize: 14, color: "#111",
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
+audioEl: { width: 320, maxWidth: "48vw" },
 };
