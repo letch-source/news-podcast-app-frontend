@@ -1,17 +1,18 @@
 ﻿import React, { useEffect, useRef, useState } from "react";
 
 /**
- * --- App.js --- (POST JSON to /api/tts)
+ * --- App.js --- (POST JSON to /api/summarize)
  * Podcast News — resilient audio playback
  *
- * This version calls your backend with **POST /api/tts** and body { text }
- * You also keep the diagnostic "known-good MP3" toggle.
+ * This version calls your backend with **POST /api/summarize** and body { topic }
+ * It expects JSON back with { combined: { audioUrl } } and plays that URL.
+ * You still have the diagnostic "known-good MP3" toggle.
  */
 
 // === Configure your backend endpoints here ===
 // If API is same-origin, leave as "". If separate host, set REACT_APP_API_BASE in .env
 const BACKEND_URL = process.env.REACT_APP_API_BASE || ""; // e.g. "https://your-api.example.com"
-const TTS_PATH = "/api/tts"; // We will POST JSON to this path
+const SUMMARIZE_PATH = "/api/summarize"; // We POST { topic } here and receive JSON with audioUrl
 
 // Public test MP3 (for quick isolation)
 const KNOWN_GOOD_MP3 =
@@ -157,29 +158,27 @@ export default function App() {
       setError(null);
 
       try {
-        // POST JSON to your TTS endpoint
-        const res = await fetch(`${BACKEND_URL}${TTS_PATH}`, {
+        // Ask backend to summarize this topic; it returns JSON with combined.audioUrl
+        const res = await fetch(`${BACKEND_URL}${SUMMARIZE_PATH}`, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg, audio/wav, audio/ogg, */*",
-          },
-          body: JSON.stringify({ text: `Latest ${selectedTopic} news summary` }),
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: String(selectedTopic).toLowerCase() }),
         });
 
         if (!res.ok) {
-          throw new Error(`TTS request failed: ${res.status} ${res.statusText}`);
+          throw new Error(`Summarize failed: ${res.status} ${res.statusText}`);
         }
 
-        const ctype = res.headers.get("Content-Type") || "";
-        if (!ctype.startsWith("audio/")) {
-          console.warn("Unexpected Content-Type:", ctype);
-        }
+        const data = await res.json();
+        const audioUrl = data?.combined?.audioUrl;
+        if (!audioUrl) throw new Error("No audioUrl returned from backend");
 
-        const blob = await res.blob();
-        if (blob.size === 0) throw new Error("Empty audio Blob");
+        // Make relative URLs absolute if BACKEND_URL points to another host
+        const absoluteUrl = /^https?:\/\//i.test(audioUrl)
+          ? audioUrl
+          : new URL(audioUrl, BACKEND_URL || window.location.origin).toString();
 
-        setAudioSrc(blob);
+        setAudioSrc(absoluteUrl); // AudioBar accepts URL strings
       } catch (e) {
         console.error(e);
         setError(e.message || String(e));
@@ -226,7 +225,7 @@ export default function App() {
         <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
             <input type="checkbox" checked={useKnownGood} onChange={(e) => setUseKnownGood(e.target.checked)} />
-            Use known‑good MP3 (diagnostic)
+            Use known-good MP3 (diagnostic)
           </label>
         </div>
 
@@ -239,7 +238,7 @@ export default function App() {
                 <div style={{ color: "#FCA5A5" }}>
                   Audio error: {error}
                   <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
-                    Ensure your server handles <code>POST {TTS_PATH}</code>, returns <code>Content-Type: audio/mpeg</code>, and that API routes are defined before the SPA fallback.
+                    Ensure your server handles <code>POST {SUMMARIZE_PATH}</code> and returns JSON with <code>combined.audioUrl</code>.
                   </div>
                 </div>
               )}
