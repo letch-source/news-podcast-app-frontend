@@ -6,9 +6,16 @@
  * - In dev, CRA proxy (package.json "proxy") forwards to localhost:3001.
  */
 
-const PROD_API_BASE = "https://fetch-bpof.onrender.com"; // your Render backend URL
-const API_BASE =
-  process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
+const PROD_API_BASE = "https://fetch-bpof.onrender.com"; // <-- your backend on Render
+const API_BASE = process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
+
+/** Ensure media urls are absolute in prod */
+function normalizeMediaUrl(u) {
+  if (!u) return u;
+  if (/^https?:\/\//i.test(u)) return u;      // already absolute
+  if (u.startsWith("/media")) return `${API_BASE}${u}`; // served by backend
+  return u;
+}
 
 /** Available topics */
 const TOPICS = [
@@ -26,8 +33,8 @@ export default function App() {
   const [status, setStatus] = useState("Pick topics, then build a summary.");
   const [isLoading, setIsLoading] = useState(false);
 
-  const [items, setItems] = useState([]);         // [{id,title,summary,url,source,topic,audioUrl}]
-  const [combined, setCombined] = useState(null); // {id,title,summary,audioUrl}
+  const [items, setItems] = useState([]);           // [{id,title,summary,url,source,topic,audioUrl}]
+  const [combined, setCombined] = useState(null);   // {id,title,summary,audioUrl}
   const [nowPlaying, setNowPlaying] = useState(null); // { title, audioUrl }
 
   const audioRef = useRef(null);
@@ -62,10 +69,7 @@ export default function App() {
       const endpoint =
         selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
       const body =
-        selectedCount === 1
-          ? { topic: selectedList[0] }
-          : { topics: selectedList };
-
+        selectedCount === 1 ? { topic: selectedList[0] } : { topics: selectedList };
       const url = `${API_BASE}${endpoint}`;
 
       const res = await fetch(url, {
@@ -74,27 +78,31 @@ export default function App() {
         body: JSON.stringify(body),
       });
 
-      // Read as text first (so we can surface server HTML/errors)
+      // Read as text first to surface any HTML/error bodies
       const raw = await res.text();
       let data = null;
-      try {
-        data = JSON.parse(raw);
-      } catch {
-        // If backend ever returns HTML error, this keeps the UI informative
-      }
+      try { data = JSON.parse(raw); } catch {}
 
       if (!res.ok) {
         throw new Error(`HTTP ${res.status} from ${url}: ${raw || "Server error"}`);
       }
-      if (!data || (typeof data !== "object")) {
+      if (!data || typeof data !== "object") {
         throw new Error(`Bad payload from ${url}: ${raw || "empty response"}`);
       }
 
-      // Normalize shape from API
+      // Normalize API result
       const gotCombined = data.combined ?? null;
       const gotItems = Array.isArray(data.items) ? data.items : [];
 
-      // If server only gave items, synthesize a combined
+      // Normalize audio URLs
+      if (gotCombined) {
+        gotCombined.audioUrl = normalizeMediaUrl(gotCombined.audioUrl);
+      }
+      gotItems.forEach(it => {
+        it.audioUrl = normalizeMediaUrl(it.audioUrl);
+      });
+
+      // If only items came back, synthesize a combined card
       if (!gotCombined && gotItems.length > 0) {
         const first = gotItems[0] || {};
         setCombined({
@@ -104,7 +112,7 @@ export default function App() {
             typeof first.summary === "string" && first.summary.trim()
               ? first.summary
               : "(No summary provided by server.)",
-          audioUrl: first.audioUrl ?? null,
+          audioUrl: normalizeMediaUrl(first.audioUrl),
         });
       } else {
         setCombined(gotCombined);
@@ -121,13 +129,11 @@ export default function App() {
   }
 
   function handlePlayAudio(title, audioUrl) {
-    if (!audioUrl) return;
-    setNowPlaying({ title, audioUrl });
-    // autoplay if possible
+    const src = normalizeMediaUrl(audioUrl);
+    if (!src) return;
+    setNowPlaying({ title, audioUrl: src });
     setTimeout(() => {
-      try {
-        audioRef.current?.play?.();
-      } catch {}
+      try { audioRef.current?.play?.(); } catch {}
     }, 50);
   }
 
@@ -181,7 +187,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* Combined summary card */}
+        {/* Combined summary + items */}
         {combined && (
           <ul style={styles.grid}>
             <li style={styles.card}>
@@ -199,7 +205,6 @@ export default function App() {
               <p style={styles.summary}>{combined.summary}</p>
             </li>
 
-            {/* Per-article cards */}
             {items.map((it) => (
               <li key={it.id} style={styles.card}>
                 <div style={styles.cardHeader}>
