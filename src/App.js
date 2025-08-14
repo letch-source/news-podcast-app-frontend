@@ -1,271 +1,272 @@
-﻿import React, { useRef, useState, useMemo } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 
-// PRODUCTION base (hardcoded for reliability); DEV uses proxy
-const PROD_API_BASE = "https://fetch-bpof.onrender.com";
-const API_BASE = process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
+/**
+ * --- App.js ---
+ * Podcast News — resilient audio playback
+ *
+ * What this adds:
+ * 1) A bulletproof <AudioBar/> that:
+ *    - Awaits play() and surfaces real errors
+ *    - Unlocks audio on first user gesture (Safari/iOS)
+ *    - Handles URL vs Blob, calls load() before play(), revokes old Blob URLs
+ *    - Exposes status so you can see what's happening
+ * 2) Example wiring for fetching TTS audio as a Blob from your API
+ * 3) A "Test known-good MP3" toggle to isolate source vs player issues
+ */
 
-const TOPICS = [
-  { key: "business", label: "Business" },
-  { key: "technology", label: "Technology" },
-  { key: "sports", label: "Sports" },
-  { key: "entertainment", label: "Entertainment" },
-  { key: "science", label: "Science" },
-  { key: "world", label: "World" },
-  { key: "health", label: "Health" },
-];
+// === Configure your backend endpoints here ===
+const BACKEND_URL = process.env.REACT_APP_API_BASE || ""; // e.g. "https://your-api.example.com"
+// Example: GET /api/tts?text=...  -> returns audio/mpeg (MP3) bytes
+const TTS_PATH = "/api/tts"; // adjust to match your server
 
-export default function App() {
-  const [status, setStatus] = useState("Pick topics, then build a summary.");
-  const [isLoading, setIsLoading] = useState(false);
-  const [items, setItems] = useState([]);
-  const [combined, setCombined] = useState(null);
-  const [nowPlaying, setNowPlaying] = useState(null);
+// Public test MP3 (for quick isolation)
+const KNOWN_GOOD_MP3 =
+  "https://file-examples.com/storage/fef4e8f6f2f3c6b6c3a6f0e/2017/11/file_example_MP3_700KB.mp3";
+
+// ------------------- AudioBar -------------------
+function AudioBar({ srcUrlOrBlob }) {
   const audioRef = useRef(null);
+  const [status, setStatus] = useState("idle");
+  const [err, setErr] = useState(null);
+  const [objectUrl, setObjectUrl] = useState(null); // so we can revoke
 
-  const [selected, setSelected] = useState(() => new Set());
-  const selectedList = useMemo(() => Array.from(selected), [selected]);
-  const selectedCount = selectedList.length;
+  // Unlock audio on first user gesture (Safari/iOS)
+  useEffect(() => {
+    const unlock = () => {
+      const a = audioRef.current;
+      if (!a) return;
+      a.muted = true;
+      a.play().then(() => a.pause()).catch(() => {});
+      a.muted = false;
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("touchstart", unlock);
+    };
+    window.addEventListener("click", unlock, { once: true });
+    window.addEventListener("touchstart", unlock, { once: true });
+    return () => {
+      window.removeEventListener("click", unlock);
+      window.removeEventListener("touchstart", unlock);
+    };
+  }, []);
 
-  function toggleTopic(key) {
-    setCombined(null);
-    setItems([]);
-    setStatus("Configuring…");
-    setSelected((prev) => {
-      const next = new Set(prev);
-      next.has(key) ? next.delete(key) : next.add(key);
-      return next;
-    });
-  }
+  // Wire status + error handlers
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
 
-  async function buildCombined() {
-    if (selectedCount === 0) return;
-    try {
-      setIsLoading(true);
-      setItems([]);
-      setCombined(null);
-      setNowPlaying(null);
-      setStatus(
-        selectedCount === 1
-          ? `Building summary for ${selectedList[0]}…`
-          : `Building a combined summary for ${selectedCount} topics…`
-      );
+    const onCanPlay = () => setStatus("ready");
+    const onPlay = () => setStatus("playing");
+    const onPause = () => setStatus("paused");
+    const onStalled = () => setStatus("stalled");
+    const onWaiting = () => setStatus("buffering");
+    const onEnded = () => setStatus("ended");
+    const onError = () => {
+      const e = a.error;
+      setErr(e ? `MediaError code ${e.code}` : "Unknown audio error");
+      setStatus("error");
+      console.warn("<audio> error:", e, a.src);
+    };
 
-      const endpoint = selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
-      const body = selectedCount === 1 ? { topic: selectedList[0] } : { topics: selectedList };
-      const url = `${API_BASE}${endpoint}`;
+    a.addEventListener("canplay", onCanPlay);
+    a.addEventListener("play", onPlay);
+    a.addEventListener("pause", onPause);
+    a.addEventListener("stalled", onStalled);
+    a.addEventListener("waiting", onWaiting);
+    a.addEventListener("ended", onEnded);
+    a.addEventListener("error", onError);
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+    return () => {
+      a.removeEventListener("canplay", onCanPlay);
+      a.removeEventListener("play", onPlay);
+      a.removeEventListener("pause", onPause);
+      a.removeEventListener("stalled", onStalled);
+      a.removeEventListener("waiting", onWaiting);
+      a.removeEventListener("ended", onEnded);
+      a.removeEventListener("error", onError);
+    };
+  }, []);
 
-      const raw = await res.text();
-      let data = null;
-      try { data = JSON.parse(raw); } catch {}
+  // When src changes, set it up and load()
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !srcUrlOrBlob) return;
 
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status} from ${url}: ${raw || "Server error"}`);
-      }
-      if (!data) {
-        throw new Error(`Bad payload from ${url}: empty response`);
-      }
+    setErr(null);
+    setStatus("loading");
 
-      if (data.combined) setCombined(data.combined);
-      if (Array.isArray(data.items)) setItems(data.items);
-
-      if (!data.combined && Array.isArray(data.items) && data.items.length > 0) {
-        setCombined({
-          id: data.items[0].id ?? "combined-0",
-          title: data.items[0].title ?? "Summary",
-          summary: typeof data.items[0].summary === "string" && data.items[0].summary.trim()
-            ? data.items[0].summary
-            : "(No summary provided by server.)",
-          audioUrl: data.items[0].audioUrl ?? null,
-        });
-      }
-
-      setStatus("Summary ready");
-    } catch (err) {
-      console.error(err);
-      setItems([]);
-      setCombined(null);
-      setNowPlaying(null);
-      setStatus(`Error: ${err.message}`);
-    } finally {
-      setIsLoading(false);
+    // Cleanup previous object URL if any
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl);
+      setObjectUrl(null);
     }
-  }
 
-  function handlePlay(item) {
-    if (!item?.audioUrl) return;
-    setNowPlaying({ title: item.title, audioUrl: item.audioUrl });
-    setTimeout(() => {
-      audioRef.current?.play().catch((e) =>
-        console.log("Audio play() blocked/failed:", e?.message || e)
-      );
-    }, 0);
-  }
+    if (srcUrlOrBlob instanceof Blob) {
+      const url = URL.createObjectURL(srcUrlOrBlob);
+      setObjectUrl(url);
+      a.src = url;
+    } else {
+      a.src = srcUrlOrBlob;
+      a.crossOrigin = "anonymous"; // if serving from a different origin
+    }
+
+    a.load();
+  }, [srcUrlOrBlob]);
+
+  // Revoke object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [objectUrl]);
+
+  const handlePlay = async () => {
+    const a = audioRef.current;
+    if (!a) return;
+    try {
+      await a.play();
+    } catch (e) {
+      setErr(e?.name || String(e));
+      console.warn("play() failed:", e);
+    }
+  };
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div style={styles.container}>
-          <h1 style={styles.h1}>Podcast News</h1>
-          <p style={styles.status}>{status}</p>
-        </div>
-      </header>
-
-      <div style={{ ...styles.container, ...styles.topicsRow }}>
-        {TOPICS.map((t) => {
-          const active = selected.has(t.key);
-          return (
-            <button
-              key={t.key}
-              onClick={() => toggleTopic(t.key)}
-              disabled={isLoading}
-              style={{
-                ...styles.chip,
-                ...(active ? styles.chipActive : {}),
-                opacity: isLoading ? 0.6 : 1,
-                cursor: isLoading ? "not-allowed" : "pointer",
-              }}
-            >
-              {t.label}
-            </button>
-          );
-        })}
+    <div style={{ position: "fixed", left: 0, right: 0, bottom: 0, padding: 12, background: "#0B1020", color: "#FFF", boxShadow: "0 -2px 24px rgba(0,0,0,0.35)", display: "flex", alignItems: "center", gap: 12 }}>
+      <button onClick={handlePlay} style={{ padding: "8px 14px", borderRadius: 12, border: 0, background: "#4F46E5", color: "#FFF", fontWeight: 600 }}>Play</button>
+      <audio ref={audioRef} preload="auto" controls style={{ flex: 1 }}/>
+      <div style={{ minWidth: 160, textAlign: "right", fontSize: 12, opacity: 0.9 }}>
+        {status}{err ? ` – ${err}` : ""}
       </div>
-
-      <div style={{ ...styles.container, ...styles.actions }}>
-        <button
-          onClick={buildCombined}
-          disabled={isLoading || selectedCount === 0}
-          style={{
-            ...styles.actionBtn,
-            opacity: isLoading || selectedCount === 0 ? 0.6 : 1,
-            cursor: isLoading || selectedCount === 0 ? "not-allowed" : "pointer",
-          }}
-        >
-          {selectedCount >= 2
-            ? `Build Combined Summary (${selectedCount})`
-            : selectedCount === 1
-            ? "Build Summary"
-            : "Select topics"}
-        </button>
-
-        {selectedCount > 0 && (
-          <button
-            onClick={() => {
-              setSelected(new Set());
-              setCombined(null);
-              setItems([]);
-              setNowPlaying(null);
-              setStatus("Selection cleared.");
-            }}
-            style={styles.actionBtn}
-          >
-            Clear
-          </button>
-        )}
-      </div>
-
-      <main style={styles.container}>
-        {combined && (
-          <div style={styles.card}>
-            <div style={styles.cardHeader}>
-              <div style={{ fontWeight: 700 }}>{combined.title}</div>
-              {combined.audioUrl ? (
-                <button
-                  onClick={() => handlePlay(combined)}
-                  style={styles.playButton}
-                  title="Play combined summary"
-                >
-                  Play
-                </button>
-              ) : null}
-            </div>
-            <p style={styles.summary}>{combined.summary}</p>
-          </div>
-        )}
-
-        {Array.isArray(items) && items.length > 0 && (
-          <ul style={styles.grid}>
-            {items.map((it) => (
-              <li key={it.id ?? it.title} style={styles.card}>
-                <div style={styles.cardHeader}>
-                  <div style={{ fontWeight: 600, lineHeight: 1.3 }}>
-                    {it.title}
-                  </div>
-                  {it.audioUrl ? (
-                    <button
-                      onClick={() => handlePlay(it)}
-                      style={styles.playButton}
-                      title="Play this item"
-                    >
-                      Play
-                    </button>
-                  ) : null}
-                </div>
-                {it.summary && <p style={styles.summary}>{it.summary}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {!combined && items.length === 0 && !isLoading && (
-          <div style={{ color: "#6b7280", marginTop: 8 }}>
-            No items yet. Select topics and build a summary.
-          </div>
-        )}
-      </main>
-
-      {nowPlaying?.audioUrl ? (
-        <footer style={styles.footer}>
-          <div style={styles.footerInner}>
-            <div style={styles.nowPlaying} title={nowPlaying.title || ""}>
-              {nowPlaying.title || "Now Playing"}
-            </div>
-            <audio
-              ref={audioRef}
-              controls
-              src={nowPlaying.audioUrl}
-              style={styles.audioEl}
-              onError={(e) => console.log("Audio error", e.currentTarget?.error)}
-              onCanPlay={() => console.log("Audio can play")}
-              onPlay={() => console.log("Playing")}
-            />
-          </div>
-        </footer>
-      ) : null}
     </div>
   );
 }
 
-const styles = {
-  page: { minHeight: "100vh", display: "flex", flexDirection: "column", background: "#fff",
-    fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif' },
-  container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
-  header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
-  h1: { fontSize: 22, fontWeight: 600, margin: 0 },
-  status: { color: "#6b7280", marginTop: 6, fontSize: 14 },
-  topicsRow: { display: "flex", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #e5e7eb",
-    paddingTop: 12, paddingBottom: 12 },
-  chip: { padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 9999, background: "#fff" },
-  chipActive: { background: "#111", color: "#fff", borderColor: "#111" },
-  actions: { display: "flex", gap: 8, paddingTop: 8 },
-  actionBtn: { padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff" },
-  grid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    listStyle: "none", padding: 0, margin: "12px 0 80px 0" },
-  card: { border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.02)" },
-  cardHeader: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginBottom: 8 },
-  playButton: { fontSize: 12, padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff",
-    cursor: "pointer" },
-  summary: { color: "#374151", fontSize: 14, margin: 0 },
-  footer: { position: "sticky", bottom: 0, background: "#fff", borderTop: "1px solid #e5e7eb" },
-  footerInner: { maxWidth: 960, margin: "0 auto", padding: 12, display: "flex", alignItems: "center", gap: 12 },
-  nowPlaying: { flex: "1 1 auto", minWidth: 0, fontWeight: 600, fontSize: 14, color: "#111",
-    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
-  audioEl: { width: 320, maxWidth: "48vw" },
-};
+// ------------------- App -------------------
+export default function App() {
+  const [topics] = useState(["Business", "Technology", "World", "Science", "Sports"]);
+  const [selectedTopic, setSelectedTopic] = useState(null);
+  const [audioSrc, setAudioSrc] = useState(null); // string URL or Blob
+  const [loadingAudio, setLoadingAudio] = useState(false);
+  const [error, setError] = useState(null);
+  const [useKnownGood, setUseKnownGood] = useState(false);
+
+  // Example: when topic selected, fetch TTS audio from your API
+  useEffect(() => {
+    const fetchAudio = async () => {
+      if (!selectedTopic) return;
+      if (useKnownGood) {
+        setAudioSrc(KNOWN_GOOD_MP3);
+        return;
+      }
+
+      setLoadingAudio(true);
+      setError(null);
+
+      try {
+        // Example call: /api/tts?text=...  -> should return audio/mpeg bytes
+        const url = `${BACKEND_URL}${TTS_PATH}?text=${encodeURIComponent(
+          `Latest ${selectedTopic} news summary`
+        )}`;
+
+        const res = await fetch(url, {
+          method: "GET",
+          // If your API requires credentials, adjust here, but keep CORS in mind
+          // credentials: "include",
+          headers: {
+            Accept: "audio/mpeg, audio/wav, audio/ogg, */*",
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error(`TTS request failed: ${res.status} ${res.statusText}`);
+        }
+
+        // Validate MIME if provided
+        const ctype = res.headers.get("Content-Type") || "";
+        if (!ctype.startsWith("audio/")) {
+          console.warn("Unexpected Content-Type:", ctype);
+          // Still try to play; some servers omit headers. But log it.
+        }
+
+        const blob = await res.blob();
+        if (blob.size === 0) throw new Error("Empty audio Blob");
+
+        setAudioSrc(blob); // AudioBar accepts Blob or URL
+      } catch (e) {
+        console.error(e);
+        setError(e.message || String(e));
+      } finally {
+        setLoadingAudio(false);
+      }
+    };
+
+    fetchAudio();
+  }, [selectedTopic, useKnownGood]);
+
+  const handleTopicClick = (t) => {
+    setSelectedTopic(t);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#0A0E1A", color: "#EAEAF1", paddingBottom: 96 }}>
+      <header style={{ padding: 24, borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
+        <h1 style={{ margin: 0, fontSize: 24, letterSpacing: 0.3 }}>Podcast News</h1>
+        <p style={{ marginTop: 6, opacity: 0.8 }}>Click a topic to generate and play the latest summary audio.</p>
+      </header>
+
+      <main style={{ padding: 24, maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 12 }}>
+          {topics.map((t) => (
+            <button
+              key={t}
+              onClick={() => handleTopicClick(t)}
+              style={{
+                padding: "10px 14px",
+                borderRadius: 14,
+                border: "1px solid rgba(255,255,255,0.12)",
+                background: selectedTopic === t ? "#1E293B" : "#111827",
+                color: "#EAEAF1",
+                cursor: "pointer",
+              }}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 18, display: "flex", alignItems: "center", gap: 10 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14 }}>
+            <input type="checkbox" checked={useKnownGood} onChange={(e) => setUseKnownGood(e.target.checked)} />
+            Use known‑good MP3 (diagnostic)
+          </label>
+        </div>
+
+        <section style={{ marginTop: 24 }}>
+          {selectedTopic ? (
+            <div>
+              <h2 style={{ marginTop: 0 }}>{selectedTopic} summary</h2>
+              {loadingAudio && <div style={{ opacity: 0.8 }}>Fetching audio…</div>}
+              {error && (
+                <div style={{ color: "#FCA5A5" }}>
+                  Audio error: {error}
+                  <div style={{ fontSize: 12, opacity: 0.85, marginTop: 6 }}>
+                    Check your API returns <code>Content-Type: audio/mpeg</code>, allows CORS, and avoids
+                    <code> Content-Disposition: attachment</code>.
+                  </div>
+                </div>
+              )}
+              {!loadingAudio && !error && !audioSrc && (
+                <div style={{ opacity: 0.8 }}>Select a topic to generate audio.</div>
+              )}
+            </div>
+          ) : (
+            <div style={{ opacity: 0.8 }}>Pick a topic above to start.</div>
+          )}
+        </section>
+      </main>
+
+      {/* Docked player */}
+      {audioSrc && <AudioBar srcUrlOrBlob={audioSrc} />}
+    </div>
+  );
+}
