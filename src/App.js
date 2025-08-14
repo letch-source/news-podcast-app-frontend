@@ -1,7 +1,10 @@
 ﻿import React, { useRef, useState } from "react";
 
-// In dev, CRA proxy will forward /api/* to http://localhost:3001
-const API_BASE = ""; // leave empty in dev
+// Always call your live backend in production, local in dev
+const API_BASE =
+  process.env.NODE_ENV === "production"
+    ? "https://fetch-bpof.onrender.com"
+    : "";
 
 const TOPICS = [
   { key: "business", label: "Business" },
@@ -30,36 +33,51 @@ export default function App() {
         body: JSON.stringify({ topic }),
       });
 
-      const text = await res.text();
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
+      const raw = await res.text();
+      let data = null;
+      try { data = JSON.parse(raw); } catch {}
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${raw || "Server error"}`);
+      }
+      if (!data) {
+        throw new Error(`Bad payload: empty response`);
       }
 
-      if (!res.ok) throw new Error(`HTTP ${res.status}: ${text || "Server error"}`);
-      if (!data || !Array.isArray(data.items)) throw new Error(`Bad payload: ${text || "missing items[]"}`);
+      // Accept both shapes
+      let list = Array.isArray(data.items) ? data.items : [];
+      if (!list.length && data.combined) {
+        const c = data.combined;
+        list = [{
+          id: c.id ?? "combined-0",
+          title: c.title ?? "Summary",
+          summary: typeof c.summary === "string" ? c.summary : "(No summary provided by server.)",
+          audioUrl: c.audioUrl ?? null,
+        }];
+      }
 
-      const normalized = data.items.map((it, i) => ({
+      if (!list.length) {
+        throw new Error(
+          `Bad payload: missing items[]. Server said: ${typeof raw === "string" ? raw.slice(0, 200) : ""}`
+        );
+      }
+
+      const normalized = list.map((it, i) => ({
         id: it.id ?? `item-${i}`,
         title: it.title ?? "Untitled",
-        summary:
-          typeof it.summary === "string" && it.summary.trim()
-            ? it.summary
-            : "(No summary provided by server.)",
-        audioUrl: it.audioUrl ?? null, // will be null until TTS is wired
+        summary: typeof it.summary === "string" && it.summary.trim()
+          ? it.summary
+          : "(No summary provided by server.)",
+        audioUrl: it.audioUrl ?? null,
       }));
 
       setItems(normalized);
       setStatus(`Showing ${topic} summaries`);
 
-      // Clear the player if nothing has audio
       if (!normalized.some(x => x.audioUrl)) {
         setNowPlaying(null);
       }
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.error(err);
       setItems([]);
       setNowPlaying(null);
@@ -70,10 +88,7 @@ export default function App() {
   }
 
   function handlePlay(item) {
-    if (!item?.audioUrl) {
-      // No audio yet; do nothing
-      return;
-    }
+    if (!item?.audioUrl) return;
     setNowPlaying({ title: item.title, audioUrl: item.audioUrl });
     setTimeout(() => {
       audioRef.current?.play().catch(() => {});
@@ -82,7 +97,6 @@ export default function App() {
 
   return (
     <div style={styles.page}>
-      {/* Header */}
       <header style={styles.header}>
         <div style={styles.container}>
           <h1 style={styles.h1}>Podcast News</h1>
@@ -90,7 +104,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Topic buttons */}
       <div style={{ ...styles.container, ...styles.topicsRow }}>
         {TOPICS.map((t) => (
           <button
@@ -108,7 +121,6 @@ export default function App() {
         ))}
       </div>
 
-      {/* Results */}
       <main style={styles.container}>
         {items.length === 0 && !isLoading && (
           <div style={{ color: "#6b7280", marginTop: 8 }}>
@@ -137,7 +149,6 @@ export default function App() {
         </ul>
       </main>
 
-      {/* Bottom audio bar — only shows when there is audio */}
       {nowPlaying?.audioUrl ? (
         <footer style={styles.footer}>
           <div style={styles.footerInner}>
@@ -160,7 +171,6 @@ export default function App() {
   );
 }
 
-/* ---------- minimal inline styles (no Tailwind needed) ---------- */
 const styles = {
   page: {
     minHeight: "100vh",
