@@ -3,11 +3,34 @@
 const PROD_API_BASE = "https://fetch-bpof.onrender.com";
 const API_BASE = process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
 
+// Ensure https:// for external article links
+function normalizeHttpUrl(u) {
+  const s = (u || "").trim();
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  return "https://" + s;
+}
+
+// Keep existing media normalization for audio etc.
 function normalizeMediaUrl(u) {
   if (!u) return u;
   if (/^https?:\/\//i.test(u)) return u;
   if (u.startsWith("/media")) return `${API_BASE}${u}`;
   return u;
+}
+
+// Sentence-aware clip to last full sentence within maxWords
+function sentenceClip(text = "", maxWords = 30) {
+  const clean = (text || "").trim();
+  if (!clean) return { text: "", truncated: false };
+  const words = clean.split(/\s+/);
+  if (words.length <= maxWords) return { text: clean, truncated: false };
+
+  const clipped = words.slice(0, maxWords).join(" ");
+  // Snap back to last sentence terminator (., !, ?)
+  const match = clipped.match(/^[\s\S]*[\.!\?](?=[^\.!\?]*$)/);
+  if (match) return { text: match[0].trim(), truncated: true };
+  return { text: clipped.trim(), truncated: true };
 }
 
 const TOPICS = [
@@ -49,7 +72,7 @@ export default function App() {
   const selectedList = useMemo(() => Array.from(selected), [selected]);
 
   function toggleTopic(key) {
-    setSelected(prev => {
+    setSelected((prev) => {
       const next = new Set(prev);
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
@@ -59,24 +82,28 @@ export default function App() {
 
   function currentButtonLabel() {
     switch (phase) {
-      case "gather": return "Gathering sources…";
-      case "summarize": return "Building summary…";
-      case "tts": return "Recording audio…";
-      default: return "Fetch the News";
+      case "gather":
+        return "Gathering sources…";
+      case "summarize":
+        return "Building summary…";
+      case "tts":
+        return "Recording audio…";
+      default:
+        return "Fetch the News";
     }
   }
 
   function fetchBtnStyle() {
-    const disabled = (isLoading || selectedCount === 0 || phase !== "idle" || !isDirty);
+    const disabled = isLoading || selectedCount === 0 || phase !== "idle" || !isDirty;
     if (disabled) return { ...styles.actionBtn, ...styles.actionBtnDisabled };
-    // idle + dirty (ready to fetch) -> black primary
     return { ...styles.actionBtn, ...styles.actionBtnPrimary };
   }
 
   async function buildCombined() {
     if (selectedCount === 0 || phase !== "idle" || !isDirty) return;
 
-    const lengthObj = LENGTH_OPTIONS.find(l => l.key === selectedLength) || LENGTH_OPTIONS[0];
+    const lengthObj =
+      LENGTH_OPTIONS.find((l) => l.key === selectedLength) || LENGTH_OPTIONS[0];
     const wordCount = lengthObj.words;
 
     try {
@@ -87,8 +114,12 @@ export default function App() {
 
       setPhase("gather");
 
-      const endpoint = selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
-      const body = selectedCount === 1 ? { topic: selectedList[0], wordCount } : { topics: selectedList, wordCount };
+      const endpoint =
+        selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
+      const body =
+        selectedCount === 1
+          ? { topic: selectedList[0], wordCount }
+          : { topics: selectedList, wordCount };
 
       const summarizePhaseTimer = setTimeout(() => setPhase("summarize"), 300);
 
@@ -104,16 +135,21 @@ export default function App() {
 
       const raw = await res.text();
       let data = null;
-      try { data = JSON.parse(raw); } catch {}
+      try {
+        data = JSON.parse(raw);
+      } catch {}
 
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${raw || "Server error"}`);
-      if (!data || typeof data !== "object") throw new Error(`Bad payload: ${raw || "empty"}`);
+      if (!data || typeof data !== "object")
+        throw new Error(`Bad payload: ${raw || "empty"}`);
 
       const gotCombined = data.combined ?? null;
       const gotItems = Array.isArray(data.items) ? data.items : [];
 
       if (gotCombined) gotCombined.audioUrl = normalizeMediaUrl(gotCombined.audioUrl);
-      gotItems.forEach(it => { it.audioUrl = normalizeMediaUrl(it.audioUrl); });
+      gotItems.forEach((it) => {
+        it.audioUrl = normalizeMediaUrl(it.audioUrl);
+      });
 
       const combinedToSet =
         gotCombined ||
@@ -122,7 +158,8 @@ export default function App() {
           title: gotItems[0].title ?? "Summary",
           summary: gotItems[0].summary || "(No summary provided.)",
           audioUrl: normalizeMediaUrl(gotItems[0].audioUrl),
-        }) || null;
+        }) ||
+        null;
 
       setCombined(combinedToSet);
       setItems(gotItems);
@@ -138,7 +175,8 @@ export default function App() {
           });
           const ttsData = await ttsRes.json();
           const audioUrl = normalizeMediaUrl(ttsData?.audioUrl || "");
-          if (audioUrl) setCombined(prev => (prev ? { ...prev, audioUrl } : prev));
+          if (audioUrl)
+            setCombined((prev) => (prev ? { ...prev, audioUrl } : prev));
         } catch (e) {
           console.error("TTS error:", e);
         }
@@ -160,22 +198,32 @@ export default function App() {
     const src = normalizeMediaUrl(audioUrl);
     if (!src) return;
     setNowPlaying({ title, audioUrl: src });
-    setTimeout(() => { try { audioRef.current?.play?.(); } catch {} }, 50);
+    setTimeout(() => {
+      try {
+        audioRef.current?.play?.();
+      } catch {}
+    }, 50);
   }
+
+  // Only show items that actually have previewable text.
+  const displayableItems = items.filter(
+    (it) => (it?.summary || "").trim().length > 0
+  );
 
   return (
     <div style={styles.page}>
       <header style={styles.header}>
         <div style={styles.container}>
           <h1 style={styles.h1}>Fetch News</h1>
-          <div style={styles.subtitle}>Custom news updates.</div>
+          {/* period removed & Title Case */}
+          <div style={styles.subtitle}>Custom News Updates</div>
         </div>
       </header>
 
       <main style={styles.container}>
         {/* Topics */}
         <div style={styles.topicsRow}>
-          {TOPICS.map(t => {
+          {TOPICS.map((t) => {
             const active = selected.has(t.key);
             return (
               <button
@@ -192,14 +240,20 @@ export default function App() {
 
         {/* Length options */}
         <div style={styles.lengthRow}>
-          {LENGTH_OPTIONS.map(opt => {
+          {LENGTH_OPTIONS.map((opt) => {
             const active = selectedLength === opt.key;
             return (
               <button
                 key={opt.key}
-                onClick={() => { setSelectedLength(opt.key); setIsDirty(true); }}
+                onClick={() => {
+                  setSelectedLength(opt.key);
+                  setIsDirty(true);
+                }}
                 aria-pressed={active}
-                style={{ ...styles.lengthBtn, ...(active ? styles.lengthBtnActive : null) }}
+                style={{
+                  ...styles.lengthBtn,
+                  ...(active ? styles.lengthBtnActive : null),
+                }}
               >
                 {opt.label}
               </button>
@@ -210,7 +264,9 @@ export default function App() {
         {/* Actions */}
         <div style={styles.actions}>
           <button
-            disabled={isLoading || selectedCount === 0 || phase !== "idle" || !isDirty}
+            disabled={
+              isLoading || selectedCount === 0 || phase !== "idle" || !isDirty
+            }
             onClick={buildCombined}
             style={fetchBtnStyle()}
           >
@@ -246,7 +302,9 @@ export default function App() {
                     ...styles.playButton,
                     ...(!combined?.audioUrl ? styles.playButtonDisabled : null),
                   }}
-                  title={combined?.audioUrl ? "Play summary" : "Audio not ready yet"}
+                  title={
+                    combined?.audioUrl ? "Play summary" : "Audio not ready yet"
+                  }
                 >
                   ▶ Play
                 </button>
@@ -256,31 +314,49 @@ export default function App() {
           </section>
         )}
 
-        {/* Sub summaries (sources) */}
-        {items.length > 0 && (
+        {/* Sub summaries (articles) */}
+        {displayableItems.length > 0 && (
           <ul style={styles.grid}>
-            {items.map(it => (
-              <li key={it.id} style={styles.card}>
-                <div style={styles.cardHeader}>
-                  <strong>{it.title}</strong>
-                  <a
-                    href={it.url || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={styles.linkButton}
-                    title="Open source article"
-                  >
-                    Link
-                  </a>
-                </div>
-                {!!it.topic && (
-                  <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
-                    {it.source ? `${it.source} · ` : ""}Topic: {it.topic}
+            {displayableItems.map((it) => {
+              const { text, truncated } = sentenceClip(it.summary, 30);
+              if (!text.trim()) return null; // defensive
+
+              const href = normalizeHttpUrl(it.url);
+
+              return (
+                <li key={it.id || it.url || it.title} style={styles.card}>
+                  <div style={styles.cardHeader}>
+                    <strong>{it.title}</strong>
+                    {/* Removed right-side Link button */}
                   </div>
-                )}
-                <p style={styles.summary}>{it.summary || "(No summary)"}</p>
-              </li>
-            ))}
+
+                  {!!it.topic && (
+                    <div
+                      style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}
+                    >
+                      {it.source ? `${it.source} · ` : ""}Topic: {it.topic}
+                    </div>
+                  )}
+
+                  <p style={{ ...styles.summary, marginBottom: 10 }}>
+                    {text}
+                    {truncated ? "…" : ""}
+                  </p>
+
+                  {href && (
+                    <a
+                      href={href}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={styles.readBtn}
+                      title="Open full article"
+                    >
+                      Read article
+                    </a>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </main>
@@ -290,9 +366,16 @@ export default function App() {
         <div style={styles.container}>
           <div style={styles.footerInner}>
             <div style={styles.nowPlaying}>
-              {nowPlaying?.title ? `Now playing: ${nowPlaying.title}` : "Nothing playing"}
+              {nowPlaying?.title
+                ? `Now playing: ${nowPlaying.title}`
+                : "Nothing playing"}
             </div>
-            <audio ref={audioRef} style={styles.audioEl} src={nowPlaying?.audioUrl || ""} controls />
+            <audio
+              ref={audioRef}
+              style={styles.audioEl}
+              src={nowPlaying?.audioUrl || ""}
+              controls
+            />
           </div>
         </div>
       </footer>
@@ -422,14 +505,16 @@ const styles = {
     opacity: 0.5,
     cursor: "not-allowed",
   },
-  linkButton: {
-    fontSize: 12,
-    padding: "6px 10px",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
-    background: "#fff",
-    textDecoration: "none",
+  readBtn: {
     display: "inline-block",
+    fontSize: 12,
+    fontWeight: 600,
+    textDecoration: "none",
+    padding: "6px 10px",
+    borderRadius: 8,
+    background: "#000",
+    color: "#fff",
+    border: "1px solid #e5e7eb",
   },
 
   summary: { color: "#374151", fontSize: 14, margin: 0 },
