@@ -1,4 +1,5 @@
 ﻿import React, { useRef, useState, useMemo } from "react";
+import { useUserLocation } from "./hooks/useUserLocation";
 
 const PROD_API_BASE = "https://fetch-bpof.onrender.com";
 const API_BASE = process.env.NODE_ENV === "production" ? PROD_API_BASE : "";
@@ -27,7 +28,6 @@ function sentenceClip(text = "", maxWords = 30) {
   if (words.length <= maxWords) return { text: clean, truncated: false };
 
   const clipped = words.slice(0, maxWords).join(" ");
-  // Snap back to last sentence terminator (., !, ?)
   const match = clipped.match(/^[\s\S]*[\.!\?](?=[^\.!\?]*$)/);
   if (match) return { text: match[0].trim(), truncated: true };
   return { text: clipped.trim(), truncated: true };
@@ -62,11 +62,22 @@ export default function App() {
   const [selected, setSelected] = useState(() => new Set());
   const [selectedLength, setSelectedLength] = useState("short");
 
-  // Progress phase for the fetch button: 'idle' | 'gather' | 'summarize' | 'tts'
   const [phase, setPhase] = useState("idle");
+  const [isDirty, setIsDirty] = useState(true);
 
-  // Track if user changed inputs since last successful fetch
-  const [isDirty, setIsDirty] = useState(true); // start enabled/black
+  const { location, status: locStatus, requestPermission, clearLocation } =
+    useUserLocation();
+
+  const stateLabel = useMemo(() => {
+    if (!location) return "";
+    return location.region || location.country || "Local";
+  }, [location]);
+
+  const topicsToRender = useMemo(() => {
+    return location
+      ? [{ key: "local", label: stateLabel || "Local" }, ...TOPICS]
+      : TOPICS;
+  }, [location, stateLabel]);
 
   const selectedCount = selected.size;
   const selectedList = useMemo(() => Array.from(selected), [selected]);
@@ -77,6 +88,16 @@ export default function App() {
       next.has(key) ? next.delete(key) : next.add(key);
       return next;
     });
+    setIsDirty(true);
+  }
+
+  function handleClearLocation() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.delete("local");
+      return next;
+    });
+    clearLocation();
     setIsDirty(true);
   }
 
@@ -94,7 +115,8 @@ export default function App() {
   }
 
   function fetchBtnStyle() {
-    const disabled = isLoading || selectedCount === 0 || phase !== "idle" || !isDirty;
+    const disabled =
+      isLoading || selectedCount === 0 || phase !== "idle" || !isDirty;
     if (disabled) return { ...styles.actionBtn, ...styles.actionBtnDisabled };
     return { ...styles.actionBtn, ...styles.actionBtnPrimary };
   }
@@ -114,16 +136,29 @@ export default function App() {
 
       setPhase("gather");
 
-      const endpoint =
-        selectedCount === 1 ? "/api/summarize" : "/api/summarize/batch";
-      const body =
-        selectedCount === 1
-          ? { topic: selectedList[0], wordCount }
-          : { topics: selectedList, wordCount };
+      const geo = location
+        ? {
+            city: location.city || "",
+            region: location.region || "",
+            country: location.countryCode || "",
+          }
+        : null;
+
+      const isSingle = selectedCount === 1;
+      const endpoint = isSingle ? "/api/summarize" : "/api/summarize/batch";
+
+      let body;
+      if (isSingle) {
+        const topic = selectedList[0];
+        body = { topic, wordCount };
+        if (topic === "local" && geo) body.geo = geo;
+      } else {
+        body = { topics: selectedList, wordCount };
+        if (selectedList.includes("local") && geo) body.geo = geo;
+      }
 
       const summarizePhaseTimer = setTimeout(() => setPhase("summarize"), 300);
 
-      // fast text-first path
       const url = `${API_BASE}${endpoint}?noTts=1`;
       const res = await fetch(url, {
         method: "POST",
@@ -144,9 +179,22 @@ export default function App() {
         throw new Error(`Bad payload: ${raw || "empty"}`);
 
       const gotCombined = data.combined ?? null;
+
+      // Force state-only title for Local topic
+      if (
+        gotCombined &&
+        gotCombined.title &&
+        selectedList.includes("local") &&
+        location &&
+        location.region
+      ) {
+        gotCombined.title = `Top local — ${location.region}`;
+      }
+
       const gotItems = Array.isArray(data.items) ? data.items : [];
 
-      if (gotCombined) gotCombined.audioUrl = normalizeMediaUrl(gotCombined.audioUrl);
+      if (gotCombined)
+        gotCombined.audioUrl = normalizeMediaUrl(gotCombined.audioUrl);
       gotItems.forEach((it) => {
         it.audioUrl = normalizeMediaUrl(it.audioUrl);
       });
@@ -164,7 +212,6 @@ export default function App() {
       setCombined(combinedToSet);
       setItems(gotItems);
 
-      // TTS phase
       if (combinedToSet?.summary) {
         setPhase("tts");
         try {
@@ -182,11 +229,9 @@ export default function App() {
         }
       }
 
-      // Successful run: mark clean so fetch button greys out
       setIsDirty(false);
     } catch (err) {
       console.error(err);
-      // keep dirty so user can retry
       setIsDirty(true);
     } finally {
       setIsLoading(false);
@@ -205,7 +250,6 @@ export default function App() {
     }, 50);
   }
 
-  // Only show items that actually have previewable text.
   const displayableItems = items.filter(
     (it) => (it?.summary || "").trim().length > 0
   );
@@ -215,15 +259,41 @@ export default function App() {
       <header style={styles.header}>
         <div style={styles.container}>
           <h1 style={styles.h1}>Fetch News</h1>
-          {/* period removed & Title Case */}
           <div style={styles.subtitle}>Custom News Updates</div>
         </div>
       </header>
 
       <main style={styles.container}>
-        {/* Topics */}
+        {!location ? (
+          <div style={styles.locationRow}>
+            <button
+              onClick={requestPermission}
+              disabled={locStatus === "locating"}
+              style={{
+                ...styles.lengthBtn,
+                ...(locStatus === "locating" ? styles.actionBtnDisabled : {}),
+              }}
+              title="Add a Local topic based on your area"
+            >
+              {locStatus === "locating"
+                ? "Finding your location…"
+                : "Use my location"}
+            </button>
+          </div>
+        ) : (
+          <div style={styles.locationHintRow}>
+            <span>
+              Added “{location.region || location.country || "Local"}” as
+              Location
+            </span>
+            <button onClick={handleClearLocation} style={styles.textLinkBtn}>
+              change
+            </button>
+          </div>
+        )}
+
         <div style={styles.topicsRow}>
-          {TOPICS.map((t) => {
+          {topicsToRender.map((t) => {
             const active = selected.has(t.key);
             return (
               <button
@@ -238,7 +308,6 @@ export default function App() {
           })}
         </div>
 
-        {/* Length options */}
         <div style={styles.lengthRow}>
           {LENGTH_OPTIONS.map((opt) => {
             const active = selectedLength === opt.key;
@@ -261,7 +330,6 @@ export default function App() {
           })}
         </div>
 
-        {/* Actions */}
         <div style={styles.actions}>
           <button
             disabled={
@@ -289,14 +357,15 @@ export default function App() {
           </button>
         </div>
 
-        {/* MAIN summary */}
         {combined && (
           <section style={styles.heroSection}>
             <div style={styles.heroCard}>
               <div style={styles.cardHeader}>
                 <strong>{combined.title}</strong>
                 <button
-                  onClick={() => handlePlayAudio(combined.title, combined.audioUrl)}
+                  onClick={() =>
+                    handlePlayAudio(combined.title, combined.audioUrl)
+                  }
                   disabled={!combined?.audioUrl}
                   style={{
                     ...styles.playButton,
@@ -314,12 +383,11 @@ export default function App() {
           </section>
         )}
 
-        {/* Sub summaries (articles) */}
         {displayableItems.length > 0 && (
           <ul style={styles.grid}>
             {displayableItems.map((it) => {
               const { text, truncated } = sentenceClip(it.summary, 30);
-              if (!text.trim()) return null; // defensive
+              if (!text.trim()) return null;
 
               const href = normalizeHttpUrl(it.url);
 
@@ -327,9 +395,7 @@ export default function App() {
                 <li key={it.id || it.url || it.title} style={styles.card}>
                   <div style={styles.cardHeader}>
                     <strong>{it.title}</strong>
-                    {/* Removed right-side Link button */}
                   </div>
-
                   {!!it.topic && (
                     <div
                       style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}
@@ -337,12 +403,10 @@ export default function App() {
                       {it.source ? `${it.source} · ` : ""}Topic: {it.topic}
                     </div>
                   )}
-
                   <p style={{ ...styles.summary, marginBottom: 10 }}>
                     {text}
                     {truncated ? "…" : ""}
                   </p>
-
                   {href && (
                     <a
                       href={href}
@@ -361,7 +425,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Fixed footer player */}
       <footer style={styles.footer}>
         <div style={styles.container}>
           <div style={styles.footerInner}>
@@ -384,170 +447,35 @@ export default function App() {
 }
 
 const styles = {
-  page: {
-    minHeight: "100vh",
-    display: "flex",
-    flexDirection: "column",
-    background: "#fff",
-    fontFamily:
-      'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif',
-    paddingBottom: FOOTER_HEIGHT,
-  },
+  page: { minHeight: "100vh", display: "flex", flexDirection: "column", background: "#fff", fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif', paddingBottom: FOOTER_HEIGHT },
   container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
   header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
   h1: { fontSize: 22, fontWeight: 600, margin: 0 },
   subtitle: { color: "#6b7280", marginTop: 6, fontSize: 14 },
-
-  topicsRow: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-    borderBottom: "1px solid #e5e7eb",
-    paddingTop: 12,
-    paddingBottom: 12,
-  },
-
-  // Topic chips
-  chip: {
-    padding: "6px 12px",
-    border: "1px solid #d1d5db",
-    borderRadius: 9999,
-    background: "#fff",
-    cursor: "pointer",
-  },
-  chipActive: {
-    background: "#111",
-    color: "#fff",
-    border: "1px solid #111",
-  },
-
-  // Length selector
+  locationRow: { display: "flex", justifyContent: "center", paddingTop: 12 },
+  locationHintRow: { display: "flex", justifyContent: "center", alignItems: "center", gap: 8, color: "#6b7280", fontSize: 12, paddingTop: 8 },
+  textLinkBtn: { border: "none", background: "transparent", color: "#111", textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: 12 },
+  topicsRow: { display: "flex", gap: 8, flexWrap: "wrap", borderBottom: "1px solid #e5e7eb", paddingTop: 12, paddingBottom: 12 },
+  chip: { padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 9999, background: "#fff", cursor: "pointer" },
+  chipActive: { background: "#111", color: "#fff", border: "1px solid #111" },
   lengthRow: { display: "flex", gap: 8, paddingTop: 12, paddingBottom: 12 },
-  lengthBtn: {
-    padding: "6px 12px",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
-    background: "#fff",
-    cursor: "pointer",
-  },
-  lengthBtnActive: {
-    background: "#111",
-    color: "#fff",
-    border: "1px solid #111",
-  },
-
-  // Actions (Fetch / Reset)
+  lengthBtn: { padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", cursor: "pointer" },
+  lengthBtnActive: { background: "#111", color: "#fff", border: "1px solid #111" },
   actions: { display: "flex", gap: 8, paddingTop: 8 },
-  actionBtn: {
-    padding: "8px 12px",
-    border: "1px solid #d1d5db",
-    borderRadius: 10,
-    background: "#fff",
-    cursor: "pointer",
-    transition: "opacity 0.15s ease, background 0.15s ease, color 0.15s ease",
-  },
-  actionBtnPrimary: {
-    background: "#111",
-    color: "#fff",
-    border: "1px solid #111",
-  },
-  actionBtnDisabled: {
-    background: "#f3f4f6",
-    color: "#9ca3af",
-    border: "1px solid #e5e7eb",
-    cursor: "not-allowed",
-  },
-
-  // Main summary card
+  actionBtn: { padding: "8px 12px", border: "1px solid #d1d5db", borderRadius: 10, background: "#fff", cursor: "pointer", transition: "opacity 0.15s ease, background 0.15s ease, color 0.15s ease" },
+  actionBtnPrimary: { background: "#111", color: "#fff", border: "1px solid #111" },
+  actionBtnDisabled: { background: "#f3f4f6", color: "#9ca3af", border: "1px solid #e5e7eb", cursor: "not-allowed" },
   heroSection: { marginTop: 12, marginBottom: 12 },
-  heroCard: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: 16,
-    background: "#fff",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-  },
-
-  // Sub summaries grid
-  grid: {
-    display: "grid",
-    gap: 12,
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-    listStyle: "none",
-    padding: 0,
-    margin: "12px 0 80px 0",
-  },
-  card: {
-    border: "1px solid #e5e7eb",
-    borderRadius: 12,
-    padding: 16,
-    background: "#fff",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.02)",
-  },
-  cardHeader: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-
-  // Buttons
-  playButton: {
-    fontSize: 12,
-    padding: "6px 10px",
-    border: "1px solid #d1d5db",
-    borderRadius: 8,
-    background: "#fff",
-    cursor: "pointer",
-  },
-  playButtonDisabled: {
-    opacity: 0.5,
-    cursor: "not-allowed",
-  },
-  readBtn: {
-    display: "inline-block",
-    fontSize: 12,
-    fontWeight: 600,
-    textDecoration: "none",
-    padding: "6px 10px",
-    borderRadius: 8,
-    background: "#000",
-    color: "#fff",
-    border: "1px solid #e5e7eb",
-  },
-
-  summary: { color: "#374151", fontSize: 14, margin: 0 },
-
-  // Fixed footer audio bar
-  footer: {
-    position: "fixed",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: "100%",
-    background: "#fff",
-    borderTop: "1px solid #e5e7eb",
-    zIndex: 100,
-    height: FOOTER_HEIGHT,
-    display: "flex",
-    alignItems: "center",
-  },
-  footerInner: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    width: "100%",
-  },
-  nowPlaying: {
-    flex: "1 1 auto",
-    minWidth: 0,
-    fontWeight: 600,
-    fontSize: 14,
-    color: "#111",
-    whiteSpace: "nowrap",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-  },
-  audioEl: { width: 320, maxWidth: "48vw" },
+  heroCard: { border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.02)" },
+  grid: { display: "grid", gap: 12, gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", listStyle: "none", padding: 0, margin: "12px 0 80px 0" },
+  card: { border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, background: "#fff", boxShadow: "0 1px 2px rgba(0,0,0,0.02)" },
+  cardHeader: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between", marginBottom: 8 },
+  playButton: { fontSize: 12, padding: "6px 10px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", cursor: "pointer" },
+  playButtonDisabled: { opacity: 0.5, cursor: "not-allowed" },
+  readBtn: { display: "inline-block", fontSize: 12, padding: "4px 8px", border: "1px solid #d1d5db", borderRadius: 8, background: "#fff", color: "#111", textDecoration: "none" },
+  summary: { fontSize: 14, lineHeight: 1.4, margin: 0 },
+  footer: { position: "fixed", bottom: 0, left: 0, width: "100%", height: FOOTER_HEIGHT, background: "#f9fafb", borderTop: "1px solid #e5e7eb", display: "flex", alignItems: "center" },
+  footerInner: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16 },
+  nowPlaying: { fontSize: 12, color: "#6b7280" },
+  audioEl: { height: 32 },
 };
