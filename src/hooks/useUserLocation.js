@@ -50,43 +50,69 @@ export function useUserLocation() {
   const [status, setStatus] = useState(location ? "ready" : "idle"); // idle | locating | ready | error
   const [error, setError] = useState(null);
 
+  // NEW: track the *permission* result from the browser (independent of IP fallback)
+  // 'unknown' | 'granted' | 'denied'
+  const [permission, setPermission] = useState("unknown");
+
   const save = useCallback((loc) => {
     setLocation(loc);
     localStorage.setItem(LS_KEY, JSON.stringify({ ...loc, cachedAt: Date.now() }));
   }, []);
 
+  // CHANGED: returns Promise<boolean> -> true only when geolocation was granted.
   const requestPermission = useCallback(() => {
     setStatus("locating"); setError(null);
-    const ac = new AbortController(); const { signal } = ac;
 
-    const onSuccess = async (pos) => {
-      try {
-        const { latitude, longitude } = pos.coords;
-        const loc = await reverseGeocode(latitude, longitude, signal);
-        save(loc); setStatus("ready");
-      } catch {
+    return new Promise((resolve) => {
+      const ac = new AbortController(); const { signal } = ac;
+
+      const onSuccess = async (pos) => {
+        try {
+          const { latitude, longitude } = pos.coords;
+          const loc = await reverseGeocode(latitude, longitude, signal);
+          save(loc);
+          setStatus("ready");
+          setPermission("granted");
+          resolve(true); // user granted precise location
+        } catch {
+          // Geolocation worked but reverse geocoding failed; still honored as granted
+          setPermission("granted");
+          try { const loc = await ipFallback(signal); save(loc); setStatus("ready"); }
+          catch (e2) { setError(e2?.message || "Location lookup failed"); setStatus("error"); }
+          resolve(true);
+        }
+      };
+
+      const onError = async () => {
+        // User denied or geolocation failed -> keep permission 'denied'
+        setPermission("denied");
         try { const loc = await ipFallback(signal); save(loc); setStatus("ready"); }
         catch (e2) { setError(e2?.message || "Location lookup failed"); setStatus("error"); }
+        resolve(false); // important: let UI know the user did NOT grant
+      };
+
+      if (!("geolocation" in navigator)) {
+        // No geolocation — treat as denied for the prompt logic
+        setPermission("denied");
+        onError();
+        return () => ac.abort();
       }
-    };
 
-    const onError = async () => {
-      try { const loc = await ipFallback(signal); save(loc); setStatus("ready"); }
-      catch (e2) { setError(e2?.message || "Location lookup failed"); setStatus("error"); }
-    };
+      navigator.geolocation.getCurrentPosition(onSuccess, onError, {
+        enableHighAccuracy: true, maximumAge: 5*60*1000, timeout: 10*1000
+      });
 
-    if (!("geolocation" in navigator)) { onError(); return () => ac.abort(); }
-
-    navigator.geolocation.getCurrentPosition(onSuccess, onError, {
-      enableHighAccuracy: true, maximumAge: 5*60*1000, timeout: 10*1000
+      // We don’t expose the abort handle since callers await the Promise
+      // but we keep AC for fetches inside reverse geocode / ip fallback.
     });
-
-    return () => ac.abort();
   }, [save]);
 
   const clearLocation = useCallback(() => {
     localStorage.removeItem(LS_KEY);
-    setLocation(null); setStatus("idle"); setError(null);
+    setLocation(null);
+    setStatus("idle");
+    setError(null);
+    setPermission("unknown");
   }, []);
 
   const pretty = useMemo(() => {
@@ -95,5 +121,13 @@ export function useUserLocation() {
     return parts.length ? parts.join(", ") : location.country || "My Location";
   }, [location]);
 
-  return { location, pretty, status, error, requestPermission, clearLocation };
+  return {
+    location,
+    pretty,
+    status,        // idle | locating | ready | error
+    permission,    // unknown | granted | denied   <-- used to keep the CTA visible on denial
+    error,
+    requestPermission, // Promise<boolean>
+    clearLocation
+  };
 }

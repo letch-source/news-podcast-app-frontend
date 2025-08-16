@@ -9,8 +9,20 @@ export default function AuthModal({ onClose, onLogin, onSignup }) {
   async function submit(e){
     e.preventDefault(); setErr('');
     try { mode === 'login' ? await onLogin(email, password) : await onSignup(email, password); onClose(); }
-    catch (e) { setErr('Failed. Check email/password.'); }
+    } catch (e2) {
+  const msg = String(e2?.message || "");
+  // Normalize common duplicate-email signals
+  if (
+    /email in use/i.test(msg) ||
+    /email.*already/i.test(msg) ||
+    (e2?.status === 400 && /email/i.test(msg))
+  ) {
+    setErr("Email already in use");
+  } else {
+    setErr(msg || "Failed. Check your details.");
   }
+}
+
 
   return (
     <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
