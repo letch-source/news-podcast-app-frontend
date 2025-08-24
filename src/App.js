@@ -52,18 +52,15 @@ const LENGTH_OPTIONS = [
   { key: "long", label: "Long", words: 2000 },
 ];
 
-const FOOTER_HEIGHT = 72; // slightly taller so controls aren’t clipped
+const FOOTER_HEIGHT = 72;
 
 // ---------- Auth / Modals ----------
-function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
+function AuthModal({ onClose, onLogin, onSignup }) {
   const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
-  const [firstName, setFirstName] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
-  const [info, setInfo] = useState("");
 
-  // helper: unwrap backend error message
   function humanError(e) {
     const msg = e?.message || "";
     try {
@@ -72,19 +69,17 @@ function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
     } catch {}
     if (/Email in use/i.test(msg)) return "Email already in use";
     if (/Invalid credentials/i.test(msg)) return "Invalid email or password";
-    if (/Missing fields/i.test(msg)) return "Missing fields";
     return "Failed. Check your details.";
   }
 
   async function submit(e) {
     e.preventDefault();
     setErr("");
-    setInfo("");
     try {
       if (mode === "login") {
         await onLogin(email, password);
       } else {
-        await onSignup(email, password, firstName);
+        await onSignup(email, password);
       }
       onClose();
     } catch (ex) {
@@ -92,35 +87,12 @@ function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
     }
   }
 
-  async function forgotPwd() {
-    setErr("");
-    setInfo("");
-    try {
-      await onForgot(email);
-      setInfo("If that email exists, a reset link has been sent.");
-    } catch {
-      setInfo("If that email exists, a reset link has been sent.");
-    }
-  }
-
-  const canSubmit =
-    mode === "login"
-      ? email.trim() && password.trim()
-      : email.trim() && password.trim() && firstName.trim();
+  const canSubmit = email.trim() && password.trim();
 
   return (
     <div style={styles.modalBackdrop}>
       <form onSubmit={submit} style={styles.modalCard}>
         <strong>{mode === "login" ? "Sign in" : "Create account"}</strong>
-
-        {mode === "signup" && (
-          <input
-            placeholder="First name"
-            value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
-            required
-          />
-        )}
 
         <input
           placeholder="Email"
@@ -138,7 +110,6 @@ function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
         />
 
         {err && <div style={{ color: "#b91c1c", fontSize: 12 }}>{err}</div>}
-        {info && <div style={{ color: "#065f46", fontSize: 12 }}>{info}</div>}
 
         <button
           type="submit"
@@ -150,18 +121,6 @@ function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
         <button type="button" onClick={onClose} style={styles.actionBtn}>
           Cancel
         </button>
-
-        {mode === "login" && (
-          <div style={{ marginTop: 6 }}>
-            <button
-              type="button"
-              onClick={forgotPwd}
-              style={styles.inlineLinkBtn}
-            >
-              Forgot password?
-            </button>
-          </div>
-        )}
 
         <div style={{ fontSize: 12, color: "#6b7280" }}>
           {mode === "login" ? (
@@ -193,61 +152,22 @@ function AuthModal({ onClose, onLogin, onSignup, onForgot }) {
   );
 }
 
-function ResetPasswordModal({ token, onClose, onReset }) {
-  const [password, setPassword] = useState("");
-  const [ok, setOk] = useState(false);
-  const [err, setErr] = useState("");
-
-  async function submit(e) {
-    e.preventDefault();
-    setErr("");
-    try {
-      await onReset(token, password);
-      setOk(true);
-      setTimeout(onClose, 1200);
-    } catch {
-      setErr("Reset failed. The link may be expired.");
-    }
-  }
-
-  return (
-    <div style={styles.modalBackdrop}>
-      <form onSubmit={submit} style={styles.modalCard}>
-        <strong>Reset password</strong>
-        <input
-          placeholder="New password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        {err && <div style={{ color: "#b91c1c", fontSize: 12 }}>{err}</div>}
-        {ok && <div style={{ color: "#065f46", fontSize: 12 }}>Password updated!</div>}
-        <button type="submit" style={styles.primaryBtn}>
-          Set new password
-        </button>
-        <button type="button" onClick={onClose} style={styles.actionBtn}>
-          Close
-        </button>
-      </form>
-    </div>
-  );
-}
-
 function ProfileModal({ user, location, onClose, onLogout, onChangeLocation }) {
   const locText = location
     ? `Location set as “${location.region || location.country || "Local"}”`
     : "Location not set";
+  const avatarLetter = (user?.email || "?").slice(0, 1).toUpperCase();
+
   return (
     <div style={styles.modalBackdrop}>
       <div style={styles.profileCard}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={styles.avatarCircle}>
-            {(user.firstName || user.email || "?").slice(0, 1).toUpperCase()}
-          </div>
+          <div style={styles.avatarCircle}>{avatarLetter}</div>
           <div>
-            <div style={{ fontWeight: 700 }}>{user.firstName || "Profile"}</div>
-            <div style={{ fontSize: 12, color: "#6b7280" }}>{user.email}</div>
+            <div style={{ fontWeight: 700 }}>{user?.email || "Profile"}</div>
+            <div style={{ fontSize: 12, color: "#6b7280" }}>
+              {user?.email || ""}
+            </div>
           </div>
         </div>
 
@@ -281,10 +201,9 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [showAuth, setShowAuth] = useState(false);
   const [showProfile, setShowProfile] = useState(false);
-  const [resetToken, setResetToken] = useState("");
 
   // Location
-  const { location, status: locStatus, requestPermission, clearLocation } = useUserLocation();
+  const { location, requestPermission } = useUserLocation();
 
   // State label for "local" chip
   const stateLabel = useMemo(() => {
@@ -293,11 +212,8 @@ export default function App() {
   }, [location]);
 
   // Custom topics
-  const [userTopics, setUserTopics] = useState([]); // [{key,label}]
-  const customKeysSet = useMemo(
-    () => new Set(userTopics.map((t) => t.key)),
-    [userTopics]
-  );
+  const [userTopics, setUserTopics] = useState([]); // array of strings
+  const customKeysSet = useMemo(() => new Set(userTopics), [userTopics]);
   const selectedCustomKeys = useMemo(
     () => Array.from(selected).filter((k) => customKeysSet.has(k)),
     [selected, customKeysSet]
@@ -309,18 +225,30 @@ export default function App() {
     return location ? [{ key: "local", label: stateLabel || "Local" }, ...base] : base;
   }, [location, stateLabel]);
 
-  const topicsToRenderCustom = useMemo(() => userTopics, [userTopics]);
+  const topicsToRenderCustom = useMemo(
+    () => userTopics.map((t) => ({ key: t, label: t })),
+    [userTopics]
+  );
 
   const selectedCount = selected.size;
   const selectedList = useMemo(() => Array.from(selected), [selected]);
 
-  // ---------- API helper ----------
-  async function api(path, opts = {}) {
+  // ---------- API helper with timeout ----------
+  async function api(path, opts = {}, { timeoutMs = 12000 } = {}) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+
     const res = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
+      signal: ctrl.signal,
       ...opts,
+    }).catch((e) => {
+      throw new Error(`Network error or timeout (${timeoutMs}ms): ${e.message}`);
     });
+
+    clearTimeout(t);
+
     const raw = await res.text();
     let data;
     try {
@@ -329,7 +257,6 @@ export default function App() {
       data = null;
     }
     if (!res.ok) {
-      // throw friendlier error
       const msg = data?.error ? JSON.stringify({ error: data.error }) : raw || "Request failed";
       throw new Error(msg);
     }
@@ -337,25 +264,23 @@ export default function App() {
   }
 
   async function login(email, password) {
-    const u = await api("/api/auth/login", {
+    const r = await api("/api/auth/login", {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    setUser(u);
-    await refreshCustomTopics(); // ensure custom topics reload after login
-    await loadLastPreset();
-    return u;
+    setUser(r.user || null);
+    await refreshCustomTopics();
+    return r.user;
   }
 
-  async function signup(email, password, firstName) {
-    const u = await api("/api/auth/signup", {
+  async function signup(email, password) {
+    const r = await api("/api/auth/signup", {
       method: "POST",
-      body: JSON.stringify({ email, password, firstName }),
+      body: JSON.stringify({ email, password }),
     });
-    setUser(u);
+    setUser(r.user || null);
     await refreshCustomTopics();
-    await loadLastPreset();
-    return u;
+    return r.user;
   }
 
   async function logout() {
@@ -365,38 +290,15 @@ export default function App() {
     setShowProfile(false);
   }
 
-  async function requestReset(email) {
-    await api("/api/auth/request-reset", {
-      method: "POST",
-      body: JSON.stringify({ email }),
-    });
-  }
-
-  async function performReset(token, password) {
-    await api("/api/auth/reset", {
-      method: "POST",
-      body: JSON.stringify({ token, password }),
-    });
-  }
-
   async function refreshCustomTopics() {
     if (!user) return setUserTopics([]);
     try {
-      const r = await api("/api/user/topics");
-      setUserTopics(Array.isArray(r.topics) ? r.topics : []);
+      const me = await api("/api/user");
+      const arr = Array.isArray(me.topics) ? me.topics : [];
+      setUserTopics(arr);
     } catch {
       setUserTopics([]);
     }
-  }
-
-  async function loadLastPreset() {
-    try {
-      const last = await api("/api/user/presets/last");
-      if (Array.isArray(last.topicKeys) && last.topicKeys.length) {
-        setSelected(new Set(last.topicKeys));
-        setIsDirty(true);
-      }
-    } catch {}
   }
 
   // ---------- Topic selection ----------
@@ -428,7 +330,7 @@ export default function App() {
     return styles.primaryBtn;
   }
 
-  // ---------- Fetch news ----------
+  // ---------- Fetch news (with stages + TTS) ----------
   async function buildCombined() {
     if (selectedCount === 0 || phase !== "idle" || !isDirty) return;
 
@@ -441,6 +343,8 @@ export default function App() {
       setItems([]);
       setCombined(null);
       setNowPlaying(null);
+
+      // Stage 1: gather (very quick visual feedback)
       setPhase("gather");
 
       const geo = location
@@ -451,25 +355,21 @@ export default function App() {
           }
         : null;
 
-      const isSingle = selectedCount === 1;
-      const endpoint = isSingle ? "/api/summarize" : "/api/summarize/batch";
+      const endpoint = "/api/summarize";
+      const body = {
+        topics: selectedList,
+        wordCount,
+        ...(geo && selectedList.includes("local") ? { geo } : {}),
+      };
 
-      let body;
-      if (isSingle) {
-        const topic = selectedList[0];
-        body = { topic, wordCount };
-        if (topic === "local" && geo) body.geo = geo;
-      } else {
-        body = { topics: selectedList, wordCount };
-        if (selectedList.includes("local") && geo) body.geo = geo;
-      }
-
-      const summarizePhaseTimer = setTimeout(() => setPhase("summarize"), 300);
+      // Stage 2: summarize
+      const summarizePhaseTimer = setTimeout(() => setPhase("summarize"), 200);
 
       const url = `${API_BASE}${endpoint}?noTts=1`;
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body),
       });
 
@@ -484,50 +384,58 @@ export default function App() {
       if (!data || typeof data !== "object")
         throw new Error(`Bad payload: ${raw || "empty"}`);
 
-      const gotCombined = data.combined ?? null;
-      if (
-        gotCombined &&
-        gotCombined.title &&
-        selectedList.includes("local") &&
-        location &&
-        location.region
-      ) {
-        gotCombined.title = `Top local — ${location.region}`;
+      // Expecting: { items, combined: { text, audioUrl } }
+      const gotItems = Array.isArray(data.items) ? data.items : [];
+
+      let title = "Summary";
+      if (selectedList.length === 1) {
+        title = `Top ${selectedList[0]}`;
+      } else if (selectedList.length > 1) {
+        title = `Top — ${selectedList.join(", ")}`;
+      }
+      if (selectedList.includes("local") && geo?.region) {
+        title = `Top local — ${geo.region}`;
       }
 
-      const gotItems = Array.isArray(data.items) ? data.items : [];
-      if (gotCombined) gotCombined.audioUrl = normalizeMediaUrl(gotCombined.audioUrl);
-      gotItems.forEach((it) => {
-        it.audioUrl = normalizeMediaUrl(it.audioUrl);
-      });
+      const combinedToSet = {
+        id: `combined-${Date.now()}`,
+        title,
+        summary: (data.combined?.text || "").trim() || "(No summary provided.)",
+        audioUrl: normalizeMediaUrl(data.combined?.audioUrl || ""),
+      };
 
-      const combinedToSet =
-        gotCombined ||
-        (gotItems[0] && {
-          id: gotItems[0].id ?? `combined-${Date.now()}`,
-          title: gotItems[0].title ?? "Summary",
-          summary: gotItems[0].summary || "(No summary provided.)",
-          audioUrl: normalizeMediaUrl(gotItems[0].audioUrl),
-        }) ||
-        null;
+      gotItems.forEach((it) => {
+        if (it && it.audioUrl) it.audioUrl = normalizeMediaUrl(it.audioUrl);
+      });
 
       setCombined(combinedToSet);
       setItems(gotItems);
 
+      // Stage 3: TTS — try to generate audio (graceful if backend lacks it)
       if (combinedToSet?.summary) {
         setPhase("tts");
         try {
           const ttsRes = await fetch(`${API_BASE}/api/tts`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body: JSON.stringify({ text: combinedToSet.summary }),
           });
-          const ttsData = await ttsRes.json();
-          const audioUrl = normalizeMediaUrl(ttsData?.audioUrl || "");
-          if (audioUrl)
-            setCombined((prev) => (prev ? { ...prev, audioUrl } : prev));
+          const maybeText = await ttsRes.text();
+          let ttsData = null;
+          try {
+            ttsData = JSON.parse(maybeText);
+          } catch {}
+          if (ttsRes.ok && ttsData && ttsData.audioUrl) {
+            const audioUrl = normalizeMediaUrl(ttsData.audioUrl);
+            if (audioUrl)
+              setCombined((prev) => (prev ? { ...prev, audioUrl } : prev));
+          } else {
+            // No TTS on backend — silently continue
+            console.warn("TTS not available or failed:", maybeText);
+          }
         } catch (e) {
-          console.error("TTS error:", e);
+          console.warn("TTS error:", e?.message || e);
         }
       }
 
@@ -552,36 +460,30 @@ export default function App() {
     }, 50);
   }
 
-  const displayableItems = items.filter(
-    (it) => (it?.summary || "").trim().length > 0
-  );
+  const displayableItems = items
+    .map((it, idx) => ({ ...it, _idx: idx }))
+    .filter((it) => (it?.summary || "").trim().length > 0);
 
-  // ---------- Mount: check auth, topics, last preset; parse reset token ----------
+  // ---------- Mount: check auth & topics, quick health probe ----------
   useEffect(() => {
     (async () => {
       try {
-        const me = await api("/api/auth/me");
-        if (me.user) {
-          setUser(me.user);
-          await refreshCustomTopics(); // ensure topics immediately after restored session
-          await loadLastPreset();
+        // fast 1s health ping to avoid long blank state on cold backends
+        try {
+          await api("/api/health", {}, { timeoutMs: 1000 });
+        } catch {}
+
+        const me = await api("/api/user");
+        if (me?.email) {
+          setUser({ email: me.email, topics: me.topics || [], location: me.location || "" });
+          setUserTopics(Array.isArray(me.topics) ? me.topics : []);
         }
       } catch {
+        // not logged in
       } finally {
         setAuthLoading(false);
       }
     })();
-
-    // Parse reset token from URL
-    const sp = new URLSearchParams(window.location.search);
-    const t = sp.get("resetToken");
-    if (t) {
-      setResetToken(t);
-      // Clean the URL (no reload)
-      const url = new URL(window.location.href);
-      url.searchParams.delete("resetToken");
-      window.history.replaceState({}, "", url.toString());
-    }
   }, []);
 
   // ---------- Custom topic creation ----------
@@ -591,9 +493,9 @@ export default function App() {
     if (!user) return setShowAuth(true);
     const v = customEntry.trim();
     if (!v) return;
-    await api("/api/user/topics", {
+    await api("/api/topics", {
       method: "POST",
-      body: JSON.stringify({ key: v, label: v }),
+      body: JSON.stringify({ topic: v }),
     });
     setCustomEntry("");
     await refreshCustomTopics();
@@ -606,9 +508,11 @@ export default function App() {
   async function confirmDeleteSelected() {
     for (const k of selectedCustomKeys) {
       try {
-        await fetch(`${API_BASE}/api/user/topics/${encodeURIComponent(k)}`, {
+        await fetch(`${API_BASE}/api/topics`, {
           method: "DELETE",
           credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ topic: k }),
         });
       } catch {}
     }
@@ -625,12 +529,9 @@ export default function App() {
   async function changeLocationFlow() {
     try {
       const granted = await requestPermission();
-      if (!granted) return; // user declined — keep as-is
-      // Success -> just mark dirty so summaries can use geo
+      if (!granted) return;
       setIsDirty(true);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
 
   // ---------- UI ----------
@@ -656,16 +557,14 @@ export default function App() {
                 title="Profile"
                 style={styles.avatarButton}
               >
-                {(user.firstName || user.email || "?").slice(0, 1).toUpperCase()}
+                {(user.email || "?").slice(0, 1).toUpperCase()}
               </button>
             )}
           </div>
         </div>
-        <div style={styles.subtitleWrap}>
-          <div style={{ fontSize: 12, color: "#6b7280" }}>
-            {authLoading ? "Checking account…" : user ? `Welcome, ${user.firstName || user.email}` : "Not signed in"}
-          </div>
-        </div>
+
+        {/* Removed the "Welcome, <email>" line */}
+        <div style={styles.subtitleWrap} />
       </header>
 
       <main style={styles.container}>
@@ -690,13 +589,11 @@ export default function App() {
                 Add Topic
               </button>
 
-              {/* Location CTA (only if no saved location) */}
               {!location && (
                 <button
                   type="button"
                   onClick={async () => {
                     const granted = await requestPermission();
-                    // If denied, location remains null => this stays visible.
                     if (granted) setIsDirty(true);
                   }}
                   style={styles.textLinkBtn}
@@ -762,7 +659,6 @@ export default function App() {
                   style={{
                     ...styles.chip,
                     ...(active ? styles.chipActive : null),
-                    // subtle badge for custom
                     boxShadow: "inset 0 0 0 1px #e5e7eb",
                   }}
                   title="Custom topic"
@@ -851,45 +747,48 @@ export default function App() {
           </section>
         )}
 
-        {/* Sub summaries (articles with sources) */}
+        {/* SOURCES list with summaries (back under the main summary) */}
         {displayableItems.length > 0 && (
-          <ul style={styles.grid}>
-            {displayableItems.map((it) => {
-              const { text, truncated } = sentenceClip(it.summary, 30);
-              if (!text.trim()) return null;
-              const href = normalizeHttpUrl(it.url);
+          <>
+            <h3 style={{ margin: "8px 0 6px 0", fontSize: 16 }}>Sources</h3>
+            <ul style={styles.grid}>
+              {displayableItems.map((it) => {
+                const { text, truncated } = sentenceClip(it.summary, 40);
+                const href = normalizeHttpUrl(it.url);
+                const source = it.source;
 
-              return (
-                <li key={it.id || it.url || it.title} style={styles.card}>
-                  <div style={styles.cardHeader}>
-                    <strong>{it.title}</strong>
-                  </div>
+                return (
+                  <li key={it.id || it.url || it.title || it._idx} style={styles.card}>
+                    <div style={styles.cardHeader}>
+                      <strong>{it.title || (it.topic ? `Topic: ${it.topic}` : "Item")}</strong>
+                    </div>
 
-                  <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
-                    {it.source ? `${it.source} · ` : ""}
-                    Topic: {it.topic}
-                  </div>
+                    <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
+                      {source ? `${source} · ` : ""}
+                      {it.topic ? `Topic: ${it.topic}` : ""}
+                    </div>
 
-                  <p style={{ ...styles.summary, marginBottom: 10 }}>
-                    {text}
-                    {truncated ? "…" : ""}
-                  </p>
+                    <p style={{ ...styles.summary, marginBottom: 10 }}>
+                      {text}
+                      {truncated ? "…" : ""}
+                    </p>
 
-                  {href && (
-                    <a
-                      href={href}
-                      target="_blank"
-                      rel="noreferrer"
-                      style={styles.readBtn}
-                      title="Open full article"
-                    >
-                      Read article
-                    </a>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
+                    {href && (
+                      <a
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={styles.readBtn}
+                        title="Open full article"
+                      >
+                        Read article
+                      </a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
       </main>
 
@@ -917,7 +816,6 @@ export default function App() {
           onClose={() => setShowAuth(false)}
           onLogin={login}
           onSignup={signup}
-          onForgot={requestReset}
         />
       )}
 
@@ -928,14 +826,6 @@ export default function App() {
           onClose={() => setShowProfile(false)}
           onLogout={logout}
           onChangeLocation={changeLocationFlow}
-        />
-      )}
-
-      {resetToken && (
-        <ResetPasswordModal
-          token={resetToken}
-          onClose={() => setResetToken("")}
-          onReset={performReset}
         />
       )}
 
@@ -973,6 +863,7 @@ export default function App() {
   );
 }
 
+/** NOTE: No "border" shorthand anywhere, to avoid React's warning when we tweak borderColor. */
 const styles = {
   page: {
     minHeight: "100vh",
@@ -981,11 +872,18 @@ const styles = {
     background: "#fff",
     fontFamily:
       'system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, sans-serif',
-    paddingBottom: FOOTER_HEIGHT + 8, // ensure audio bar never clips
+    paddingBottom: FOOTER_HEIGHT + 8,
   },
   container: { maxWidth: 960, margin: "0 auto", padding: "16px" },
 
-  header: { borderBottom: "1px solid #e5e7eb", background: "#fff" },
+  header: {
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
+    borderLeftWidth: 0,
+    borderRightWidth: 0,
+    background: "#fff",
+  },
   containerHeader: {
     maxWidth: 960,
     margin: "0 auto",
@@ -1032,7 +930,9 @@ const styles = {
   chip: {
     padding: "8px 12px",
     borderRadius: 999,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -1046,7 +946,9 @@ const styles = {
   lengthBtn: {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -1068,7 +970,9 @@ const styles = {
   actionBtn: {
     padding: "10px 14px",
     borderRadius: 10,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -1076,7 +980,9 @@ const styles = {
   primaryBtn: {
     padding: "10px 14px",
     borderRadius: 10,
-    border: "1px solid #111827",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#111827",
     background: "#111827",
     color: "#fff",
     cursor: "pointer",
@@ -1110,7 +1016,9 @@ const styles = {
 
   heroSection: { marginTop: 8, marginBottom: 16 },
   heroCard: {
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     borderRadius: 12,
     padding: 16,
     background: "#fff",
@@ -1125,7 +1033,9 @@ const styles = {
   playButton: {
     padding: "6px 10px",
     borderRadius: 8,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -1143,7 +1053,9 @@ const styles = {
     gap: 12,
   },
   card: {
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     borderRadius: 12,
     padding: 12,
     background: "#fff",
@@ -1152,7 +1064,9 @@ const styles = {
     display: "inline-block",
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     textDecoration: "none",
     fontSize: 14,
   },
@@ -1163,7 +1077,9 @@ const styles = {
     right: 0,
     bottom: 0,
     height: FOOTER_HEIGHT,
-    borderTop: "1px solid #e5e7eb",
+    borderTopWidth: 1,
+    borderTopStyle: "solid",
+    borderTopColor: "#e5e7eb",
     background: "#fafafa",
     zIndex: 40,
   },
@@ -1184,7 +1100,9 @@ const styles = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     fontWeight: 700,
     cursor: "pointer",
@@ -1205,7 +1123,9 @@ const styles = {
     maxWidth: 360,
     background: "#fff",
     borderRadius: 12,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     padding: 16,
     display: "grid",
     gap: 10,
@@ -1216,7 +1136,9 @@ const styles = {
     maxWidth: 420,
     background: "#fff",
     borderRadius: 12,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     padding: 16,
   },
   avatarCircle: {
@@ -1254,7 +1176,9 @@ const styles = {
   customLeft: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" },
   customRight: { display: "flex", alignItems: "center" },
   customInput: {
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     borderRadius: 8,
     padding: "8px 10px",
     fontSize: 14,
@@ -1266,13 +1190,17 @@ const styles = {
     maxWidth: 420,
     background: "#fff",
     borderRadius: 12,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     padding: 16,
   },
   confirmCancelBtn: {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #e5e7eb",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#e5e7eb",
     background: "#fff",
     cursor: "pointer",
     fontSize: 14,
@@ -1280,7 +1208,9 @@ const styles = {
   confirmDeleteBtn: {
     padding: "8px 12px",
     borderRadius: 8,
-    border: "1px solid #b91c1c",
+    borderWidth: 1,
+    borderStyle: "solid",
+    borderColor: "#b91c1c",
     background: "#b91c1c",
     color: "#fff",
     cursor: "pointer",
